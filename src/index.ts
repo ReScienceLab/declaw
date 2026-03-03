@@ -70,6 +70,16 @@ let dataDir: string = path.join(os.homedir(), ".openclaw", "declaw");
 let peerPort: number = 8099;
 let _testMode: boolean = false;
 let _startupTimer: ReturnType<typeof setTimeout> | null = null;
+let _bootstrapPeers: string[] = [];
+
+function tryConnectExternalDaemon(): YggdrasilInfo | null {
+  const ext = detectExternalYggdrasil();
+  if (!ext || !identity) return null;
+  yggInfo = ext;
+  identity.yggIpv6 = ext.address;
+  console.log(`[p2p] Hot-connected to external daemon: ${ext.address}`);
+  return ext;
+}
 
 export default function register(api: any) {
   // ── 1. Background service ──────────────────────────────────────────────────
@@ -85,7 +95,8 @@ export default function register(api: any) {
       dataDir = cfg.data_dir ?? dataDir;
       peerPort = cfg.peer_port ?? peerPort;
       const extraPeers: string[] = cfg.yggdrasil_peers ?? [];
-      const bootstrapPeers: string[] = cfg.bootstrap_peers ?? [];
+      _bootstrapPeers = cfg.bootstrap_peers ?? [];
+      const bootstrapPeers = _bootstrapPeers;
       const discoveryIntervalMs: number = cfg.discovery_interval_ms ?? 10 * 60 * 1000;
 
       // Resolve test_mode: "auto" (default) detects Yggdrasil availability
@@ -542,12 +553,10 @@ export default function register(api: any) {
     parameters: { type: "object", properties: {}, required: [] },
     async execute(_id: string, _params: Record<string, never>) {
       const binaryAvailable = isYggdrasilAvailable();
-      const daemonRunning = yggInfo !== null;
-      const externalDaemon = !daemonRunning ? detectExternalYggdrasil() : null;
-      const netInfo = binaryAvailable ? getYggdrasilNetworkInfo() : null;
 
-      // Determine status: Ready, Restart needed, or Setup needed
-      if (daemonRunning && yggInfo) {
+      // Already connected
+      if (yggInfo) {
+        const netInfo = getYggdrasilNetworkInfo();
         const lines = [
           `Status: Ready`,
           `Your P2P address: ${yggInfo.address}`,
@@ -555,51 +564,35 @@ export default function register(api: any) {
         ];
         if (netInfo) {
           lines.push(`Network peers: ${netInfo.peerCount} (${netInfo.publicPeers} public)`);
-          if (netInfo.publicPeers === 0) {
-            lines.push("", "Warning: No public peers — only LAN neighbors are reachable.",
-              "Run: openclaw p2p setup");
-          }
         }
         return { content: [{ type: "text", text: lines.join("\n") }] };
       }
 
-      if (externalDaemon) {
-        const lines = [
-          `Status: Restart needed`,
-          `Yggdrasil daemon is running (${externalDaemon.address}) but the plugin hasn't connected to it yet.`,
-          "",
-          "Fix: Restart the OpenClaw gateway to pick up the daemon:",
-          "  launchctl kickstart -k gui/$(id -u)/ai.openclaw.gateway",
-        ];
-        return { content: [{ type: "text", text: lines.join("\n") }] };
+      // Not connected yet — try to hot-connect to external daemon
+      const connected = tryConnectExternalDaemon();
+      if (connected) {
+        // Auto-trigger discovery in background
+        bootstrapDiscovery(identity!, peerPort, _bootstrapPeers).catch(() => {});
+        return {
+          content: [{ type: "text", text:
+            `Status: Ready (just connected)\n` +
+            `Your P2P address: ${connected.address}\n` +
+            `Peer discovery started in background.`
+          }],
+        };
       }
 
-      if (binaryAvailable) {
-        const lines = [
-          `Status: Setup needed`,
-          "Yggdrasil is installed but no daemon is running.",
-          "",
-          "Fix: Run the automated setup (installs config + starts daemon):",
-          "  openclaw p2p setup",
-          "",
-          "Then restart the gateway:",
-          "  launchctl kickstart -k gui/$(id -u)/ai.openclaw.gateway",
-        ];
-        return { content: [{ type: "text", text: lines.join("\n") }] };
-      }
-
-      const lines = [
-        `Status: Setup needed`,
-        "Yggdrasil is not installed. Without it, P2P messaging won't work.",
-        "",
-        "Fix: Run the automated installer:",
-        "  openclaw p2p setup",
-        "",
-        "This installs Yggdrasil, generates a config, and starts the daemon.",
-        "After setup, restart the gateway:",
-        "  launchctl kickstart -k gui/$(id -u)/ai.openclaw.gateway",
-      ];
-      return { content: [{ type: "text", text: lines.join("\n") }] };
+      // No daemon found — guide user
+      const action = binaryAvailable
+        ? "Yggdrasil is installed but no daemon is running."
+        : "Yggdrasil is not installed.";
+      return {
+        content: [{ type: "text", text:
+          `Status: Setup needed\n${action}\n\n` +
+          `Fix: Run the automated installer:\n  openclaw p2p setup\n\n` +
+          `After setup, call yggdrasil_check again — it will connect automatically.`
+        }],
+      };
     },
   });
 }
