@@ -266,6 +266,30 @@ export default function register(api: any) {
             console.log(`  [${time}] from ${m.fromYgg.slice(0, 20)}...: ${m.content}`);
           }
         });
+
+      p2p
+        .command("setup")
+        .description("Install and configure Yggdrasil for P2P connectivity")
+        .action(() => {
+          const scriptPath = require("path").resolve(__dirname, "..", "scripts", "setup-yggdrasil.sh");
+          const npmScriptPath = require("path").resolve(__dirname, "..", "scripts", "setup-yggdrasil.sh");
+          const candidates = [scriptPath, npmScriptPath];
+          let found = "";
+          for (const p of candidates) {
+            if (require("fs").existsSync(p)) { found = p; break; }
+          }
+          if (found) {
+            console.log(`Running ${found} ...`);
+            try {
+              require("child_process").execSync(`bash "${found}"`, { stdio: "inherit" });
+            } catch {
+              console.error("Setup script failed. Run manually: bash " + found);
+            }
+          } else {
+            console.log("Yggdrasil setup script:");
+            console.log("  curl -fsSL https://raw.githubusercontent.com/ReScienceLab/DeClaw/main/scripts/setup-yggdrasil.sh | bash");
+          }
+        });
     },
     { commands: ["p2p"] }
   );

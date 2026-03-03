@@ -1,100 +1,88 @@
 # Yggdrasil Installation Guide
 
 Yggdrasil is a lightweight, end-to-end encrypted IPv6 overlay network.
-After install, restart the OpenClaw gateway — the plugin starts the daemon automatically.
+After install, restart the OpenClaw gateway — the plugin detects the daemon automatically.
 
 ---
 
-## macOS
+## Recommended: Automated Setup
+
+The setup script handles binary installation, config generation (with TCP admin
+endpoint to avoid permission issues), public peer injection, and daemon startup:
+
+```bash
+openclaw p2p setup
+```
+
+Or run directly:
+```bash
+curl -fsSL https://raw.githubusercontent.com/ReScienceLab/DeClaw/main/scripts/setup-yggdrasil.sh | bash
+```
+
+This works on **macOS** (arm64/amd64) and **Linux** (Debian/Ubuntu/Arch/tarball).
+
+---
+
+## Manual Install
+
+### macOS
+
+> **Note:** `brew install yggdrasil` uses a .pkg that may be blocked by Gatekeeper.
+> The setup script above handles this automatically by extracting the binary directly.
 
 ```bash
 brew install yggdrasil
 ```
 
-Verify:
-```bash
-yggdrasil -version
-```
+If `which yggdrasil` returns nothing after brew install, Gatekeeper blocked it.
+Run `openclaw p2p setup` instead.
 
----
-
-## Linux — Debian / Ubuntu / Raspberry Pi OS
+### Linux — Debian / Ubuntu
 
 ```bash
-# Add the Yggdrasil apt repo
 curl -sL https://www.yggdrasil-network.github.io/apt-key.gpg | sudo apt-key add -
 echo "deb http://www.yggdrasil-network.github.io/apt/ debian main" \
   | sudo tee /etc/apt/sources.list.d/yggdrasil.list
-
-sudo apt update
-sudo apt install yggdrasil
+sudo apt update && sudo apt install yggdrasil
 ```
 
-> The plugin manages its own daemon. You do NOT need `systemctl enable yggdrasil` — the gateway controls it.
+### Linux — Arch
 
-Verify:
 ```bash
-yggdrasil -version
+yay -S yggdrasil
 ```
 
----
-
-## Linux — Arch
+### Linux — Manual
 
 ```bash
-yay -S yggdrasil   # or: paru -S yggdrasil
-```
-
----
-
-## Linux — Manual / other distros
-
-Download the latest release binary from:
-https://github.com/yggdrasil-network/yggdrasil-go/releases/latest
-
-Pick the archive for your arch (e.g. `yggdrasil-X.Y.Z-linux-amd64.tar.gz`),
-extract, and place the `yggdrasil` binary somewhere on your `$PATH`:
-
-```bash
+# Download from https://github.com/yggdrasil-network/yggdrasil-go/releases/latest
 tar -xzf yggdrasil-*.tar.gz
-sudo mv yggdrasil /usr/local/bin/
+sudo mv yggdrasil yggdrasilctl /usr/local/bin/
 ```
 
----
-
-## Windows
-
-Download the `.msi` installer from:
-https://github.com/yggdrasil-network/yggdrasil-go/releases/latest
-
-Run it. The binary ends up at `C:\Program Files\Yggdrasil\yggdrasil.exe`.
-Make sure `C:\Program Files\Yggdrasil` is on your system `PATH`.
-
----
-
-## Docker
+### Docker
 
 ```dockerfile
-# Requires NET_ADMIN for TUN interface
 docker run --cap-add=NET_ADMIN --device=/dev/net/tun ...
 ```
 
 ---
 
-## After any install
+## After Install
 
-1. Restart the OpenClaw gateway.
-2. The plugin detects the binary, generates a config, and starts the daemon.
-3. Your `200::/8` address will be shown in the gateway logs.
-4. Call `yggdrasil_check()` to confirm and get your routable address to share.
+1. Restart the OpenClaw gateway:
+   ```bash
+   launchctl kickstart -k gui/$(id -u)/ai.openclaw.gateway
+   ```
+2. The plugin detects the daemon and obtains your `200::/8` address.
+3. Use `yggdrasil_check` tool or `openclaw p2p status` to verify.
 
 ## Troubleshooting
 
-If `yggdrasil_check()` still returns `derived_only` after install:
-
 | Symptom | Fix |
 |---|---|
-| `which yggdrasil` returns nothing | Binary not on PATH. Reinstall or add to PATH. |
-| Binary found but daemon not starting | Restart the OpenClaw gateway — plugin detects binary at startup. |
+| `which yggdrasil` returns nothing | Gatekeeper blocked it (macOS). Run `openclaw p2p setup`. |
+| Binary found but daemon not detected | Admin socket permission denied. Run `openclaw p2p setup` to switch to TCP admin. |
+| Binary found, daemon running, still not detected | Restart the gateway: `launchctl kickstart -k gui/$(id -u)/ai.openclaw.gateway` |
 | Linux: permission denied on TUN | Needs `CAP_NET_ADMIN`. Run as root or `sudo setcap cap_net_admin+ep $(which yggdrasil)`. |
 | Docker: no TUN device | Add `--cap-add=NET_ADMIN --device=/dev/net/tun` to container. |

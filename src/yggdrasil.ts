@@ -14,6 +14,10 @@ const DEFAULT_BOOTSTRAP_PEERS = [
   "tcp://46.246.86.205:60002",
 ];
 
+const WELL_KNOWN_TCP_ENDPOINTS = [
+  "tcp://127.0.0.1:9001",
+];
+
 const WELL_KNOWN_SOCKETS = [
   "/var/run/yggdrasil.sock",
   "/run/yggdrasil.sock",
@@ -21,34 +25,55 @@ const WELL_KNOWN_SOCKETS = [
 
 let yggProcess: ChildProcess | null = null;
 
+function tryYggdrasilctl(endpoint: string): YggdrasilInfo | null {
+  try {
+    const raw = execSync(`yggdrasilctl -json -endpoint ${endpoint} getSelf`, {
+      encoding: "utf-8",
+      timeout: 5000,
+      stdio: ["ignore", "pipe", "ignore"],
+    })
+    const data = JSON.parse(raw)
+    const address = data.address || data.IPv6Address || data.ipv6_address
+    const subnet = data.subnet || data.IPv6Subnet || data.ipv6_subnet || ""
+    if (address) return { address, subnet, pid: 0 }
+  } catch { /* endpoint unreachable */ }
+  return null
+}
+
 /**
- * Try to detect an already-running Yggdrasil daemon via its admin socket.
- * Checks well-known socket paths and runs `yggdrasilctl getSelf`.
+ * Try to detect an already-running Yggdrasil daemon.
+ * Checks TCP admin endpoints first (no permission issues), then UNIX sockets.
  */
 export function detectExternalYggdrasil(extraSocketPaths: string[] = []): YggdrasilInfo | null {
-  const candidates = [...WELL_KNOWN_SOCKETS, ...extraSocketPaths];
-
-  for (const sock of candidates) {
-    if (!fs.existsSync(sock)) continue;
-    try {
-      const endpoint = sock.startsWith("unix://") ? sock : `unix://${sock}`;
-      const raw = execSync(`yggdrasilctl -json -endpoint ${endpoint} getSelf`, {
-        encoding: "utf-8",
-        timeout: 5000,
-        stdio: ["ignore", "pipe", "ignore"],
-      });
-      const data = JSON.parse(raw);
-      const address = data.address || data.IPv6Address || data.ipv6_address;
-      const subnet = data.subnet || data.IPv6Subnet || data.ipv6_subnet || "";
-      if (address) {
-        console.log(`[ygg] Detected external Yggdrasil daemon via ${sock}`);
-        return { address, subnet, pid: 0 };
-      }
-    } catch {
-      // Socket exists but yggdrasilctl failed — try next
+  // 1. Try TCP endpoints first — no permission issues
+  for (const ep of WELL_KNOWN_TCP_ENDPOINTS) {
+    const info = tryYggdrasilctl(ep)
+    if (info) {
+      console.log(`[ygg] Detected external Yggdrasil daemon via ${ep}`)
+      return info
     }
   }
-  return null;
+
+  // 2. Try bare yggdrasilctl (uses its own defaults / config)
+  const bare = tryYggdrasilctl("")
+  if (bare) {
+    console.log("[ygg] Detected external Yggdrasil daemon via default endpoint")
+    return bare
+  }
+
+  // 3. Fall back to UNIX sockets
+  const candidates = [...WELL_KNOWN_SOCKETS, ...extraSocketPaths]
+  for (const sock of candidates) {
+    if (!fs.existsSync(sock)) continue
+    const endpoint = sock.startsWith("unix://") ? sock : `unix://${sock}`
+    const info = tryYggdrasilctl(endpoint)
+    if (info) {
+      console.log(`[ygg] Detected external Yggdrasil daemon via ${sock}`)
+      return info
+    }
+    console.log(`[ygg] Socket ${sock} exists but yggdrasilctl failed — likely permission denied (run: scripts/setup-yggdrasil.sh to fix)`)
+  }
+  return null
 }
 
 /** Check if the yggdrasil binary is available on PATH. */
@@ -70,14 +95,15 @@ function generateConfig(confFile: string, sockFile: string, extraPeers: string[]
   const raw = execSync("yggdrasil -genconf", { encoding: "utf-8" });
   let conf = raw;
 
-  // Inject AdminListen if missing (Yggdrasil 0.5.x omits it by default)
+  // Inject AdminListen — prefer TCP to avoid UNIX socket permission issues
+  const adminListen = WELL_KNOWN_TCP_ENDPOINTS[0] || `unix://${sockFile}`
   if (!conf.includes("AdminListen:")) {
     conf = conf.trimEnd();
     if (conf.endsWith("}")) {
-      conf = conf.slice(0, -1).trimEnd() + `\n  AdminListen: "unix://${sockFile}"\n}\n`;
+      conf = conf.slice(0, -1).trimEnd() + `\n  AdminListen: "${adminListen}"\n}\n`;
     }
   } else {
-    conf = conf.replace(/AdminListen:.*/, `AdminListen: "unix://${sockFile}"`);
+    conf = conf.replace(/AdminListen:.*/, `AdminListen: "${adminListen}"`);
   }
 
   // Enable TUN interface so 200::/8 addresses are routable
