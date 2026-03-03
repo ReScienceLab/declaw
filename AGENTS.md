@@ -89,19 +89,97 @@ All runtime config is in `openclaw.json` under `plugins.entries.declaw.config`:
 
 ## Git Workflow
 
-- Branch from `main`: `feature/<slug>`, `fix/<slug>`
-- Commit prefixes: `feat:`, `fix:`, `perf:`, `refactor:`, `docs:`, `chore:`, `test:`
+We use **Git Flow** for version control. Install with `brew install git-flow`.
+
+### Branching Strategy (Git Flow)
+
+- `main` — Production branch, always deployable
+- `develop` — Integration branch for features
+- `feature/<slug>` — New features (branch from `develop`)
+- `fix/<slug>` — Bug fixes (branch from `develop`)
+- `hotfix/<version>` — Urgent production fixes (branch from `main`)
+
+### Git Flow Commands
+
+```bash
+# Initialize git flow (first time only)
+git flow init
+
+# Start a new feature
+git flow feature start <name>
+
+# Finish feature — DO NOT use git flow feature finish
+# Instead, push and create PR:
+git push -u origin feature/<name>
+gh pr create --base develop --head feature/<name>
+
+# Start a hotfix
+git flow hotfix start <version>
+
+# Finish hotfix (merges to main and develop)
+git flow hotfix finish <version>
+git push origin main develop --tags
+
+# Start a release
+git flow release start <version>
+
+# Finish release
+git flow release finish <version>
+git push origin main develop --tags
+```
+
+### Important: Features Must Use PRs
+
+**Never directly merge feature branches.** Always:
+1. Push feature branch to origin
+2. Create PR targeting `develop`
+3. Get review and merge via GitHub
+4. **Close the corresponding issue** when merging (use `Fixes #N` or `Closes #N` in the PR description)
+
+### Commit Convention
+
+- `feat:` — New features
+- `fix:` — Bug fixes
+- `perf:` — Performance improvements
+- `refactor:` — Code refactoring
+- `docs:` — Documentation changes
+- `test:` — Test additions/changes
+- `chore:` — Maintenance tasks
 - Breaking changes: `feat!:` with `BREAKING CHANGE:` footer (0.x phase — breaking changes expected)
-- Never force-push `main`
+
+**Do not add any watermark or AI-generated signatures to commit messages.**
+
+### Issue Management
+
+When creating new issues:
+1. **Add type labels**: `bug`, `feature`, `enhancement`, `documentation`, `refactor`, `test`, `chore`
+2. **Add tag labels**: `priority:high` / `priority:medium` / `priority:low`, `good first issue`, `help wanted`, area tags (`bootstrap`, `p2p`, `yggdrasil`, etc.)
+3. **Write clear descriptions**: bugs include reproduction steps + expected vs actual; features describe use case and desired outcome
+
+### PR Requirements
+
+1. All tests must pass: `npm run build && node --test test/*.test.mjs`
+2. TypeScript must compile: `npm run build`
+3. Feature branches merge to `develop` via PR
+4. Hotfix branches merge to both `main` and `develop`
+5. Releases: `develop` → `main` via PR
+6. Reference the issue number in the PR description (e.g., `#123`)
+7. Use closing keywords to auto-close issues on merge (e.g., `Fixes #123`, `Closes #123`)
 
 ## Release Process
 
-### Version Bump & npm Publish
+### Release Checklist
+
 1. Ensure all changes committed and tests pass: `npm run build && node --test test/*.test.mjs`
-2. Bump version: `npm version patch|minor|major` (creates git tag `vX.Y.Z`)
-3. Push with tags: `git push origin main --tags`
-4. Create GitHub release for the tag: `gh release create vX.Y.Z --generate-notes`
-5. GitHub Actions (`.github/workflows/publish.yml`) auto-publishes to npm on release
+2. Update `CHANGELOG.md`:
+   - Move items from `[Unreleased]` to the new version section
+   - Add release date in format `[X.Y.Z] - YYYY-MM-DD`
+   - Categorize: `Breaking Changes`, `Added`, `Changed`, `Fixed`
+   - **Reference issues and PRs** in entries (e.g., `Issue #63`, `PR #64`)
+3. Bump version: `npm version patch|minor|major` (creates git tag `vX.Y.Z`)
+4. Push with tags: `git push origin main develop --tags`
+5. Create GitHub release: `gh release create vX.Y.Z --generate-notes`
+6. GitHub Actions (`.github/workflows/publish.yml`) auto-publishes to npm on release
 
 ### ClawHub Skill Publish
 - Verify login: `npx clawhub@latest whoami`
@@ -113,11 +191,8 @@ All runtime config is in `openclaw.json` under `plugins.entries.declaw.config`:
 - Deploy via AWS SSM (no SSH): `base64 -i bootstrap/server.mjs` → SSM send-command to all 5 instances → restart systemd
 - Verify each node: `curl -s http://[node-ygg-addr]:8099/health`
 
-### Changelog
-- Update `CHANGELOG.md` before tagging — follows Keep a Changelog format
-- Sections: `Breaking Changes`, `Added`, `Changed`, `Fixed`
-
 ### Versioning
+
 Semantic versioning: `vMAJOR.MINOR.PATCH`
 - MAJOR: Breaking changes (in 0.x phase, MINOR covers breaking changes)
 - MINOR: New features
