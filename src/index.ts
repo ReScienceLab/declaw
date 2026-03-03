@@ -36,7 +36,7 @@ export default function register(api: any) {
     id: "ipv6-p2p-node",
 
     start: async () => {
-      const cfg: PluginConfig = api.config?.plugins?.entries?.["ipv6-p2p"]?.config ?? {};
+      const cfg: PluginConfig = api.config?.plugins?.entries?.["claw-p2p"]?.config ?? {};
       dataDir = cfg.data_dir ?? dataDir;
       peerPort = cfg.peer_port ?? peerPort;
       const extraPeers: string[] = cfg.yggdrasil_peers ?? [];

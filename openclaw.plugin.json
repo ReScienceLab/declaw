@@ -1,5 +1,5 @@
 {
-  "id": "ipv6-p2p",
+  "id": "claw-p2p",
   "name": "IPv6 P2P",
   "description": "Direct encrypted P2P communication between OpenClaw instances via Yggdrasil IPv6",
   "version": "0.1.0",
