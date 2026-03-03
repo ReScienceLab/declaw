@@ -122,28 +122,29 @@ install_binary() {
 # ── 4. Generate config ────────────────────────────────────────────────────────
 generate_config() {
   if [ -f "$YGG_CONF" ]; then
-    # Check if config already has AdminListen with TCP
-    if grep -q "AdminListen" "$YGG_CONF" && grep -q "tcp://" "$YGG_CONF"; then
-      ok "Config exists with TCP admin endpoint"
-      return
-    fi
-    warn "Existing config found at ${YGG_CONF} — patching AdminListen..."
+    warn "Existing config found at ${YGG_CONF} — checking..."
   else
     info "Generating Yggdrasil config..."
     yggdrasil -genconf | need_sudo tee "$YGG_CONF" >/dev/null
   fi
 
   # Patch: add TCP AdminListen (avoids UNIX socket permission issues)
-  local tmpconf
-  tmpconf="$(mktemp)"
+  local tmpconf needs_update=false
   if grep -q "AdminListen" "$YGG_CONF"; then
-    sed "s|AdminListen:.*|AdminListen: \"tcp://${YGG_ADMIN_ADDR}\"|" "$YGG_CONF" > "$tmpconf"
+    if ! grep -q "tcp://${YGG_ADMIN_ADDR}" "$YGG_CONF"; then
+      tmpconf="$(mktemp)"
+      sed "s|AdminListen:.*|AdminListen: \"tcp://${YGG_ADMIN_ADDR}\"|" "$YGG_CONF" > "$tmpconf"
+      need_sudo cp "$tmpconf" "$YGG_CONF"
+      rm -f "$tmpconf"
+      needs_update=true
+    fi
   else
-    # Insert before closing brace
+    tmpconf="$(mktemp)"
     sed "\$i\\  AdminListen: \"tcp://${YGG_ADMIN_ADDR}\"" "$YGG_CONF" > "$tmpconf"
+    need_sudo cp "$tmpconf" "$YGG_CONF"
+    rm -f "$tmpconf"
+    needs_update=true
   fi
-  need_sudo cp "$tmpconf" "$YGG_CONF"
-  rm -f "$tmpconf"
 
   # Patch: inject public peers if Peers list is empty
   if grep -qE 'Peers:\s*\[\s*\]' "$YGG_CONF"; then
@@ -155,9 +156,14 @@ generate_config() {
     sed "s|Peers: \[\]|Peers: [\n${peer_lines}  ]|" "$YGG_CONF" > "$tmpconf"
     need_sudo cp "$tmpconf" "$YGG_CONF"
     rm -f "$tmpconf"
+    needs_update=true
   fi
 
-  ok "Config written to ${YGG_CONF} (admin: tcp://${YGG_ADMIN_ADDR})"
+  if [ "$needs_update" = true ]; then
+    ok "Config updated at ${YGG_CONF} (admin: tcp://${YGG_ADMIN_ADDR})"
+  else
+    ok "Config already correct at ${YGG_CONF}"
+  fi
 }
 
 # ── 5. Start/restart daemon ──────────────────────────────────────────────────

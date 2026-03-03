@@ -24,10 +24,14 @@ const WELL_KNOWN_SOCKETS = [
 ];
 
 let yggProcess: ChildProcess | null = null;
+let detectedEndpoint: string | null = null;
 
 function tryYggdrasilctl(endpoint: string): YggdrasilInfo | null {
   try {
-    const raw = execSync(`yggdrasilctl -json -endpoint ${endpoint} getSelf`, {
+    const cmd = endpoint
+      ? `yggdrasilctl -json -endpoint ${endpoint} getSelf`
+      : `yggdrasilctl -json getSelf`
+    const raw = execSync(cmd, {
       encoding: "utf-8",
       timeout: 5000,
       stdio: ["ignore", "pipe", "ignore"],
@@ -50,6 +54,7 @@ export function detectExternalYggdrasil(extraSocketPaths: string[] = []): Yggdra
     const info = tryYggdrasilctl(ep)
     if (info) {
       console.log(`[ygg] Detected external Yggdrasil daemon via ${ep}`)
+      detectedEndpoint = ep
       return info
     }
   }
@@ -58,6 +63,7 @@ export function detectExternalYggdrasil(extraSocketPaths: string[] = []): Yggdra
   const bare = tryYggdrasilctl("")
   if (bare) {
     console.log("[ygg] Detected external Yggdrasil daemon via default endpoint")
+    detectedEndpoint = null
     return bare
   }
 
@@ -69,6 +75,7 @@ export function detectExternalYggdrasil(extraSocketPaths: string[] = []): Yggdra
     const info = tryYggdrasilctl(endpoint)
     if (info) {
       console.log(`[ygg] Detected external Yggdrasil daemon via ${sock}`)
+      detectedEndpoint = endpoint
       return info
     }
     console.log(`[ygg] Socket ${sock} exists but yggdrasilctl failed — likely permission denied (run: scripts/setup-yggdrasil.sh to fix)`)
@@ -206,6 +213,14 @@ async function waitForAddress(logFile: string, timeoutSec: number): Promise<Yggd
   return null;
 }
 
+/** Build yggdrasilctl command prefix using the detected admin endpoint */
+function yggctl(subcmd: string): string {
+  if (detectedEndpoint) {
+    return `yggdrasilctl -json -endpoint ${detectedEndpoint} ${subcmd}`
+  }
+  return `yggdrasilctl -json ${subcmd}`
+}
+
 /**
  * Ensure the running Yggdrasil daemon has at least one public peer.
  * If only multicast/LAN peers are connected, inject default public peers
@@ -213,7 +228,7 @@ async function waitForAddress(logFile: string, timeoutSec: number): Promise<Yggd
  */
 export function ensurePublicPeers(): void {
   try {
-    const raw = execSync("yggdrasilctl -json getPeers", {
+    const raw = execSync(yggctl("getPeers"), {
       encoding: "utf-8",
       timeout: 5000,
       stdio: ["ignore", "pipe", "ignore"],
@@ -226,9 +241,12 @@ export function ensurePublicPeers(): void {
 
     if (!hasPublicPeer || peers.length === 0) {
       console.log("[ygg] No public peers detected — injecting default peers");
+      const addPrefix = detectedEndpoint
+        ? `yggdrasilctl -endpoint ${detectedEndpoint}`
+        : `yggdrasilctl`
       for (const peer of DEFAULT_BOOTSTRAP_PEERS) {
         try {
-          execSync(`yggdrasilctl addPeer uri="${peer}"`, {
+          execSync(`${addPrefix} addPeer uri="${peer}"`, {
             timeout: 5000,
             stdio: "ignore",
           });
@@ -256,7 +274,7 @@ export function stopYggdrasil(): void {
  */
 export function getYggdrasilNetworkInfo(): { peerCount: number; publicPeers: number; routeCount: number } | null {
   try {
-    const peersRaw = execSync("yggdrasilctl -json getPeers", {
+    const peersRaw = execSync(yggctl("getPeers"), {
       encoding: "utf-8",
       timeout: 5000,
       stdio: ["ignore", "pipe", "ignore"],
@@ -269,7 +287,7 @@ export function getYggdrasilNetworkInfo(): { peerCount: number; publicPeers: num
 
     let routeCount = 0;
     try {
-      const treeRaw = execSync("yggdrasilctl -json getTree", {
+      const treeRaw = execSync(yggctl("getTree"), {
         encoding: "utf-8",
         timeout: 5000,
         stdio: ["ignore", "pipe", "ignore"],
