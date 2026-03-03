@@ -287,13 +287,7 @@ verify() {
   echo ""
   if command -v openclaw >/dev/null 2>&1; then
     info "Next: restart the OpenClaw gateway to pick up the daemon."
-    if [ "$PLATFORM" = "macos" ]; then
-      local uid
-      uid="$(stat -f %u /dev/console 2>/dev/null || echo "\$(id -u)")"
-      echo "  launchctl kickstart -k gui/${uid}/ai.openclaw.gateway"
-    else
-      echo "  openclaw gateway restart"
-    fi
+    echo "  openclaw gateway restart"
     echo ""
   fi
 }
