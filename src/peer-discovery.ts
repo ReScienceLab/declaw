@@ -42,7 +42,11 @@ export async function fetchRemoteBootstrapPeers(): Promise<string[]> {
  * Update docs/bootstrap.json instead of editing this array.
  */
 export const DEFAULT_BOOTSTRAP_PEERS: string[] = [
-  "200:697f:bda:1e8e:706a:6c5e:630b:51d",
+  "200:697f:bda:1e8e:706a:6c5e:630b:51d",  // us-east-2
+  "200:e1a5:b063:958:8f74:ec45:8eb0:e30e",  // us-west-2
+  "200:9cf6:eaf1:7d3e:14b0:5869:2140:b618", // eu-west-1
+  "202:adbc:dde1:e272:1cdb:97d0:8756:4f77", // ap-northeast-1
+  "200:5ec6:62dd:9e91:3752:820c:98f5:5863", // ap-southeast-1
 ];
 
 const EXCHANGE_TIMEOUT_MS = 30_000;
