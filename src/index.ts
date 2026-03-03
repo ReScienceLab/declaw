@@ -21,6 +21,8 @@ import { startYggdrasil, stopYggdrasil, isYggdrasilAvailable } from "./yggdrasil
 import { initDb, listPeers, upsertPeer, removePeer, getPeer } from "./peer-db";
 import { startPeerServer, stopPeerServer, getInbox } from "./peer-server";
 import { sendP2PMessage, pingPeer } from "./peer-client";
+import { bootstrapDiscovery, startDiscoveryLoop, stopDiscoveryLoop, DEFAULT_BOOTSTRAP_PEERS } from "./peer-discovery";
+import { upsertDiscoveredPeer } from "./peer-db";
 import { buildChannel, wireInboundToGateway } from "./channel";
 import { Identity, YggdrasilInfo, PluginConfig } from "./types";
 
@@ -42,6 +44,8 @@ export default function register(api: any) {
       const extraPeers: string[] = cfg.yggdrasil_peers ?? [];
       const testMode = cfg.test_mode ?? false;
       _testMode = testMode;
+      const bootstrapPeers: string[] = cfg.bootstrap_peers ?? [];
+      const discoveryIntervalMs: number = cfg.discovery_interval_ms ?? 10 * 60 * 1000;
 
       // Load or create Ed25519 identity
       identity = loadOrCreateIdentity(dataDir);
@@ -79,9 +83,16 @@ export default function register(api: any) {
 
       // Wire incoming messages to OpenClaw gateway
       wireInboundToGateway(api);
+
+      // DHT peer discovery — run after server is up so we can receive replies
+      setImmediate(async () => {
+        await bootstrapDiscovery(identity!, peerPort, bootstrapPeers);
+        startDiscoveryLoop(identity!, peerPort, discoveryIntervalMs);
+      });
     },
 
     stop: async () => {
+      stopDiscoveryLoop();
       await stopPeerServer();
       stopYggdrasil();
     },
@@ -203,6 +214,22 @@ export default function register(api: any) {
           } else {
             console.error(`✗ Failed: ${result.error}`);
           }
+        });
+
+      p2p
+        .command("discover")
+        .description("Trigger an immediate DHT peer discovery round")
+        .action(async () => {
+          if (!identity) {
+            console.error("Plugin not started. Restart the gateway first.");
+            return;
+          }
+          const cfg: PluginConfig = api.config?.plugins?.entries?.["claw-p2p"]?.config ?? {};
+          const bootstrapPeers: string[] = cfg.bootstrap_peers ?? [];
+          const all = [...DEFAULT_BOOTSTRAP_PEERS, ...bootstrapPeers];
+          console.log(`Discovering peers via ${all.length || "0"} bootstrap node(s)...`);
+          const found = await bootstrapDiscovery(identity, peerPort, bootstrapPeers);
+          console.log(`Discovery complete — ${found} new peer(s) found. Total: ${listPeers().length}`);
         });
 
       p2p
@@ -360,6 +387,29 @@ export default function register(api: any) {
         `Unread inbox: ${inbox.length} messages`,
       ];
       return { content: [{ type: "text", text: lines.join("\n") }] };
+    },
+  });
+
+  api.registerTool({
+    name: "p2p_discover",
+    description:
+      "Trigger an immediate DHT peer discovery round. Announces this node to bootstrap peers " +
+      "and absorbs their routing tables. Use when the user wants to find other agents on the network.",
+    parameters: { type: "object", properties: {}, required: [] },
+    async execute(_id: string, _params: Record<string, never>) {
+      if (!identity) {
+        return { content: [{ type: "text", text: "P2P service not started." }] };
+      }
+      const cfg: PluginConfig = api.config?.plugins?.entries?.["claw-p2p"]?.config ?? {};
+      const bootstrapPeers: string[] = cfg.bootstrap_peers ?? [];
+      const found = await bootstrapDiscovery(identity, peerPort, bootstrapPeers);
+      const total = listPeers().length;
+      return {
+        content: [{
+          type: "text",
+          text: `Discovery complete — ${found} new peer(s) found. Known peers: ${total}`,
+        }],
+      };
     },
   });
 

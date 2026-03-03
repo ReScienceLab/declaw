@@ -34,4 +34,23 @@ export interface PluginConfig {
   data_dir?: string;
   yggdrasil_peers?: string[];
   test_mode?: boolean;
+  bootstrap_peers?: string[];
+  discovery_interval_ms?: number;
+}
+
+/** Signed peer-exchange announcement sent to /peer/announce */
+export interface PeerAnnouncement {
+  fromYgg: string;
+  publicKey: string;
+  alias?: string;
+  timestamp: number;
+  signature: string;
+  /** peers the sender knows about (shared for gossip) */
+  peers: Array<{ yggAddr: string; publicKey: string; alias?: string; lastSeen: number }>;
+}
+
+/** Peer record with discovery metadata */
+export interface DiscoveredPeerRecord extends PeerRecord {
+  discoveredVia?: string;  // yggAddr of the node that told us about this peer
+  source: "manual" | "bootstrap" | "gossip";
 }

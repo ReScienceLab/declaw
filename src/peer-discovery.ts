@@ -1,0 +1,217 @@
+/**
+ * DHT-style peer discovery via Bootstrap + Gossip exchange.
+ *
+ * Flow:
+ *   1. On startup, connect to bootstrap nodes (hardcoded + config)
+ *   2. POST /peer/announce to each bootstrap → receive their peer list
+ *   3. Add discovered peers to local store
+ *   4. Fanout: also announce to the peers we just learned about (1 level deep)
+ *   5. Periodic loop: re-announce to a sample of known peers to keep the table fresh
+ *
+ * Any node that runs this plugin becomes a relay — it shares its peer table
+ * with anyone who announces to it, so the network self-heals over time.
+ */
+
+import { Identity, PeerAnnouncement } from "./types";
+import { signMessage } from "./identity";
+import { listPeers, upsertDiscoveredPeer, getPeersForExchange } from "./peer-db";
+
+/**
+ * Default bootstrap nodes.
+ * The network founder's Yggdrasil address — the first entry point for new nodes.
+ * Users can add more via config `bootstrap_peers`.
+ *
+ * TODO: replace with actual Yggdrasil address once deployed.
+ */
+export const DEFAULT_BOOTSTRAP_PEERS: string[] = [
+  // "200:xxxx:xxxx:xxxx:xxxx:xxxx:xxxx:xxxx", // founder node — fill in after first deploy
+];
+
+const EXCHANGE_TIMEOUT_MS = 8_000;
+const MAX_FANOUT_PEERS = 5;   // how many newly-discovered peers to also announce to
+const MAX_SHARED_PEERS = 20;  // max peers we share in one exchange
+
+let _discoveryTimer: NodeJS.Timeout | null = null;
+
+// ── Signed announcement builder ───────────────────────────────────────────────
+
+function buildAnnouncement(identity: Identity): Omit<PeerAnnouncement, "signature"> {
+  const myPeers = getPeersForExchange(MAX_SHARED_PEERS).map((p) => ({
+    yggAddr: p.yggAddr,
+    publicKey: p.publicKey,
+    alias: p.alias || undefined,
+    lastSeen: p.lastSeen,
+  }));
+
+  return {
+    fromYgg: identity.yggIpv6,
+    publicKey: identity.publicKey,
+    alias: undefined,
+    timestamp: Date.now(),
+    peers: myPeers,
+  };
+}
+
+// ── Core exchange ─────────────────────────────────────────────────────────────
+
+/**
+ * POST /peer/announce to a single target node.
+ * Returns the list of peers they shared back, or null on failure.
+ */
+export async function announceToNode(
+  identity: Identity,
+  targetYggAddr: string,
+  port: number = 8099
+): Promise<Array<{ yggAddr: string; publicKey: string; alias?: string; lastSeen: number }> | null> {
+  const payload = buildAnnouncement(identity);
+  const signature = signMessage(identity.privateKey, payload as Record<string, unknown>);
+  const announcement: PeerAnnouncement = { ...payload, signature };
+
+  const url = `http://[${targetYggAddr}]:${port}/peer/announce`;
+
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), EXCHANGE_TIMEOUT_MS);
+
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(announcement),
+      signal: ctrl.signal,
+    });
+
+    clearTimeout(timer);
+
+    if (!resp.ok) return null;
+
+    const body = await resp.json() as { ok: boolean; peers?: any[] };
+    return body.peers ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// ── Bootstrap ─────────────────────────────────────────────────────────────────
+
+/**
+ * Announce to all bootstrap nodes and absorb their peer tables.
+ * Then fanout to a sample of newly-discovered peers.
+ */
+export async function bootstrapDiscovery(
+  identity: Identity,
+  port: number = 8099,
+  extraBootstrap: string[] = []
+): Promise<number> {
+  const bootstrapAddrs = [
+    ...DEFAULT_BOOTSTRAP_PEERS,
+    ...extraBootstrap,
+  ].filter((a) => a && a !== identity.yggIpv6);
+
+  if (bootstrapAddrs.length === 0) {
+    console.log("[p2p:discovery] No bootstrap nodes configured — skipping initial discovery.");
+    return 0;
+  }
+
+  console.log(`[p2p:discovery] Bootstrapping via ${bootstrapAddrs.length} node(s)...`);
+
+  let totalDiscovered = 0;
+  const fanoutCandidates: string[] = [];
+
+  for (const addr of bootstrapAddrs) {
+    const peers = await announceToNode(identity, addr, port);
+    if (!peers) {
+      console.warn(`[p2p:discovery] Bootstrap ${addr.slice(0, 20)}... unreachable`);
+      continue;
+    }
+
+    for (const p of peers) {
+      if (p.yggAddr === identity.yggIpv6) continue;
+      upsertDiscoveredPeer(p.yggAddr, p.publicKey, {
+        alias: p.alias,
+        discoveredVia: addr,
+        source: "bootstrap",
+      });
+      fanoutCandidates.push(p.yggAddr);
+      totalDiscovered++;
+    }
+
+    console.log(`[p2p:discovery] Bootstrap ${addr.slice(0, 20)}... → +${peers.length} peers`);
+  }
+
+  // Fanout: announce to a sample of newly-learned peers so they know about us too
+  const fanout = fanoutCandidates.slice(0, MAX_FANOUT_PEERS);
+  await Promise.allSettled(
+    fanout.map((addr) =>
+      announceToNode(identity, addr, port).then((peers) => {
+        if (!peers) return;
+        for (const p of peers) {
+          if (p.yggAddr === identity.yggIpv6) continue;
+          upsertDiscoveredPeer(p.yggAddr, p.publicKey, {
+            alias: p.alias,
+            discoveredVia: addr,
+            source: "gossip",
+          });
+        }
+      })
+    )
+  );
+
+  console.log(`[p2p:discovery] Bootstrap complete — ${totalDiscovered} peers discovered`);
+  return totalDiscovered;
+}
+
+// ── Periodic gossip loop ──────────────────────────────────────────────────────
+
+/**
+ * Periodically re-announce to a random sample of known peers to keep the
+ * routing table fresh and propagate new nodes across the network.
+ */
+export function startDiscoveryLoop(
+  identity: Identity,
+  port: number = 8099,
+  intervalMs: number = 10 * 60 * 1000  // default: every 10 minutes
+): void {
+  if (_discoveryTimer) return;
+
+  const runGossip = async () => {
+    const peers = listPeers();
+    if (peers.length === 0) return;
+
+    // Pick a random sample to exchange with
+    const sample = peers
+      .sort(() => Math.random() - 0.5)
+      .slice(0, MAX_FANOUT_PEERS);
+
+    let updated = 0;
+    await Promise.allSettled(
+      sample.map(async (peer) => {
+        const received = await announceToNode(identity, peer.yggAddr, port);
+        if (!received) return;
+        for (const p of received) {
+          if (p.yggAddr === identity.yggIpv6) continue;
+          upsertDiscoveredPeer(p.yggAddr, p.publicKey, {
+            alias: p.alias,
+            discoveredVia: peer.yggAddr,
+            source: "gossip",
+          });
+          updated++;
+        }
+      })
+    );
+
+    if (updated > 0) {
+      console.log(`[p2p:discovery] Gossip round: +${updated} peer updates`);
+    }
+  };
+
+  _discoveryTimer = setInterval(runGossip, intervalMs);
+  console.log(`[p2p:discovery] Gossip loop started (interval: ${intervalMs / 1000}s)`);
+}
+
+export function stopDiscoveryLoop(): void {
+  if (_discoveryTimer) {
+    clearInterval(_discoveryTimer);
+    _discoveryTimer = null;
+    console.log("[p2p:discovery] Gossip loop stopped");
+  }
+}

@@ -1,7 +1,5 @@
 ![claw-p2p banner](assets/banner.png)
 
-# <img src="assets/logo.png" height="36" valign="middle"> claw-p2p
-
 <p align="center">
   <a href="https://github.com/ReScienceLab/claw-p2p/releases"><img src="https://img.shields.io/github/v/release/ReScienceLab/claw-p2p?include_prereleases&style=for-the-badge" alt="GitHub release"></a>
   <a href="https://www.npmjs.com/package/@resciencelab/claw-p2p"><img src="https://img.shields.io/npm/v/@resciencelab/claw-p2p?style=for-the-badge&logo=npm" alt="npm version"></a>

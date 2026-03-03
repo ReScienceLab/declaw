@@ -4,10 +4,10 @@
  */
 import * as fs from "fs";
 import * as path from "path";
-import { PeerRecord } from "./types";
+import { PeerRecord, DiscoveredPeerRecord } from "./types";
 
 interface PeerStore {
-  peers: Record<string, PeerRecord>;
+  peers: Record<string, DiscoveredPeerRecord>;
 }
 
 let dbPath: string;
@@ -43,9 +43,46 @@ export function upsertPeer(yggAddr: string, alias: string = ""): void {
     existing.alias = alias || existing.alias;
     existing.lastSeen = now;
   } else {
-    store.peers[yggAddr] = { yggAddr, publicKey: "", alias, firstSeen: now, lastSeen: now };
+    store.peers[yggAddr] = { yggAddr, publicKey: "", alias, firstSeen: now, lastSeen: now, source: "manual" };
   }
   save();
+}
+
+/**
+ * Upsert a peer discovered via bootstrap or gossip.
+ * Never overwrites a manually-added peer's alias or source.
+ */
+export function upsertDiscoveredPeer(
+  yggAddr: string,
+  publicKey: string,
+  opts: { alias?: string; discoveredVia?: string; source?: "bootstrap" | "gossip" } = {}
+): void {
+  const now = Date.now();
+  const existing = store.peers[yggAddr];
+  if (existing) {
+    if (!existing.publicKey) existing.publicKey = publicKey;
+    existing.lastSeen = now;
+    if (!existing.discoveredVia) existing.discoveredVia = opts.discoveredVia;
+  } else {
+    store.peers[yggAddr] = {
+      yggAddr,
+      publicKey,
+      alias: opts.alias ?? "",
+      firstSeen: now,
+      lastSeen: now,
+      source: opts.source ?? "gossip",
+      discoveredVia: opts.discoveredVia,
+    };
+  }
+  save();
+}
+
+/** Return peers suitable for sharing during peer exchange (max N, most recently seen). */
+export function getPeersForExchange(max: number = 20): DiscoveredPeerRecord[] {
+  return Object.values(store.peers)
+    .filter((p) => p.publicKey) // only share peers we have a public key for
+    .sort((a, b) => b.lastSeen - a.lastSeen)
+    .slice(0, max);
 }
 
 export function removePeer(yggAddr: string): void {
@@ -71,7 +108,7 @@ export function toufuVerifyAndCache(yggAddr: string, publicKey: string): boolean
 
   if (!existing) {
     // Unknown peer — TOFU: accept and cache
-    store.peers[yggAddr] = { yggAddr, publicKey, alias: "", firstSeen: now, lastSeen: now };
+    store.peers[yggAddr] = { yggAddr, publicKey, alias: "", firstSeen: now, lastSeen: now, source: "gossip" };
     save();
     return true;
   }
