@@ -167,3 +167,110 @@ server.post("/peer/announce", async (req, reply) => {
 await server.listen({ port: PORT, host: "::" });
 console.log(`[bootstrap] Listening on [::]:${PORT}${TEST_MODE ? " (test mode)" : ""}`);
 console.log(`[bootstrap] Data dir: ${DATA_DIR}`);
+
+// ---------------------------------------------------------------------------
+// Periodic sync with sibling bootstrap nodes
+// ---------------------------------------------------------------------------
+const BOOTSTRAP_JSON_URL =
+  "https://resciencelab.github.io/DeClaw/bootstrap.json";
+const SYNC_INTERVAL_MS = parseInt(process.env.SYNC_INTERVAL_MS ?? String(5 * 60 * 1000));
+
+// Generate a persistent identity for this bootstrap node
+const idFile = path.join(DATA_DIR, "bootstrap-identity.json");
+let selfKeypair;
+if (fs.existsSync(idFile)) {
+  const saved = JSON.parse(fs.readFileSync(idFile, "utf8"));
+  selfKeypair = nacl.sign.keyPair.fromSeed(Buffer.from(saved.seed, "base64"));
+} else {
+  const seed = nacl.randomBytes(32);
+  selfKeypair = nacl.sign.keyPair.fromSeed(seed);
+  fs.writeFileSync(idFile, JSON.stringify({
+    seed: Buffer.from(seed).toString("base64"),
+    publicKey: Buffer.from(selfKeypair.publicKey).toString("base64"),
+  }, null, 2));
+}
+const selfPubB64 = Buffer.from(selfKeypair.publicKey).toString("base64");
+
+async function getSelfYggAddr() {
+  try {
+    const { execSync } = await import("child_process");
+    const out = execSync("yggdrasilctl getSelf 2>/dev/null", { encoding: "utf8" });
+    const m = out.match(/IPv6 address[^│]*│\s*(\S+)/);
+    return m ? m[1].trim() : null;
+  } catch { return null; }
+}
+
+const FALLBACK_SIBLINGS = [
+  "200:697f:bda:1e8e:706a:6c5e:630b:51d",
+  "200:e1a5:b063:958:8f74:ec45:8eb0:e30e",
+  "200:9cf6:eaf1:7d3e:14b0:5869:2140:b618",
+  "202:adbc:dde1:e272:1cdb:97d0:8756:4f77",
+  "200:5ec6:62dd:9e91:3752:820c:98f5:5863",
+];
+
+async function fetchSiblingAddrs() {
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 10_000);
+    const resp = await fetch(BOOTSTRAP_JSON_URL, { signal: ctrl.signal });
+    clearTimeout(timer);
+    if (!resp.ok) return FALLBACK_SIBLINGS;
+    const data = await resp.json();
+    const addrs = (data.bootstrap_nodes ?? []).map((n) => n.yggAddr);
+    return addrs.length > 0 ? addrs : FALLBACK_SIBLINGS;
+  } catch { return FALLBACK_SIBLINGS; }
+}
+
+async function syncWithSiblings() {
+  const selfAddr = await getSelfYggAddr();
+  if (!selfAddr) {
+    console.warn("[bootstrap:sync] Could not determine own Yggdrasil address — skipping");
+    return;
+  }
+
+  const siblings = (await fetchSiblingAddrs()).filter((a) => a !== selfAddr);
+  if (siblings.length === 0) return;
+
+  const myPeers = getPeersForExchange(50);
+  const signable = {
+    fromYgg: selfAddr,
+    publicKey: selfPubB64,
+    alias: `bootstrap-${selfAddr.slice(0, 12)}`,
+    timestamp: Date.now(),
+    peers: myPeers,
+  };
+  const sortedKeys = Object.keys(signable).sort();
+  const msg = Buffer.from(JSON.stringify(signable, sortedKeys));
+  const sig = nacl.sign.detached(msg, selfKeypair.secretKey);
+  const announcement = { ...signable, signature: Buffer.from(sig).toString("base64") };
+
+  let ok = 0;
+  for (const addr of siblings) {
+    try {
+      const res = await fetch(`http://[${addr}]:${PORT}/peer/announce`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(announcement),
+        signal: AbortSignal.timeout(20_000),
+      });
+      if (res.ok) {
+        const body = await res.json();
+        for (const p of body.peers ?? []) {
+          if (p.yggAddr === selfAddr) continue;
+          upsertPeer(p.yggAddr, p.publicKey, {
+            alias: p.alias,
+            source: "gossip",
+            discoveredVia: addr,
+          });
+        }
+        ok++;
+      }
+    } catch {}
+  }
+  console.log(`[bootstrap:sync] Synced with ${ok}/${siblings.length} siblings — total peers: ${peers.size}`);
+}
+
+// Initial sync after 30s (let Yggdrasil routes converge), then every SYNC_INTERVAL_MS
+setTimeout(syncWithSiblings, 30_000);
+setInterval(syncWithSiblings, SYNC_INTERVAL_MS);
+console.log(`[bootstrap] Sibling sync enabled (interval: ${SYNC_INTERVAL_MS / 1000}s)`);
