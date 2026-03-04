@@ -106,13 +106,23 @@ git checkout main
 
 echo "Backmerged main → develop"
 
-# ── 8. Done ──────────────────────────────────────────────────────────────────
+# ── 8. Publish to ClawHub ────────────────────────────────────────────────────
+
+echo "Publishing skill to ClawHub..."
+if command -v npx &>/dev/null; then
+  npx clawhub@latest publish skills/declaw
+  echo "ClawHub publish complete → https://clawhub.ai/Jing-yilin/declaw"
+else
+  echo "Warning: npx not found — publish manually: npx clawhub@latest publish skills/declaw"
+fi
+
+# ── 9. Done ──────────────────────────────────────────────────────────────────
 
 echo ""
 echo "=== Released v${VERSION} ==="
 echo ""
 echo "Post-release checklist:"
 echo "  1. Verify npm: https://www.npmjs.com/package/@resciencelab/declaw"
-echo "  2. Publish skill: npx clawhub@latest publish skills/declaw"
+echo "  2. Verify ClawHub: https://clawhub.ai/Jing-yilin/declaw"
 echo "  3. Deploy bootstrap (if server.mjs changed):"
 echo "     bash -c 'B64=\$(base64 -i bootstrap/server.mjs); for pair in \"i-04670f4d1a72c7d5d:us-east-2\" \"i-096ba79b9ae854339:us-west-2\" \"i-084242224f1a49b13:eu-west-1\" \"i-0b909aacd92097e43:ap-northeast-1\" \"i-0141cd0f56a902978:ap-southeast-1\"; do IID=\${pair%%:*}; REGION=\${pair##*:}; aws ssm send-command --instance-ids \$IID --region \$REGION --document-name AWS-RunShellScript --parameters \"{\\\"commands\\\":[\\\"echo '\\'\\''\${B64}'\\'\\'\" | base64 -d > /opt/declaw-bootstrap/server.mjs\\\",\\\"systemctl restart declaw-bootstrap\\\"]}\" --query Command.CommandId --output text; done'"
