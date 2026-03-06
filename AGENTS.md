@@ -93,47 +93,33 @@ We use **Git Flow** for version control. Install with `brew install git-flow`.
 
 ### Branching Strategy (Git Flow)
 
-- `main` — Production branch, always deployable
-- `develop` — Integration branch for features
-- `feature/<slug>` — New features (branch from `develop`)
-- `fix/<slug>` — Bug fixes (branch from `develop`)
-- `hotfix/<version>` — Urgent production fixes (branch from `main`)
+- `main` — The only long-lived branch, always deployable
+- `feature/<slug>` — New features (branch from `main`)
+- `fix/<slug>` — Bug fixes (branch from `main`)
 
-### Git Flow Commands
+### Workflow
 
 ```bash
-# Initialize git flow (first time only)
-git flow init
+# Start any change
+git checkout main && git pull
+git checkout -b feature/<slug>   # or fix/<slug>
 
-# Start a new feature
-git flow feature start <name>
+# ... make changes ...
+npx changeset add   # select patch/minor/major, write a description
 
-# Finish feature — DO NOT use git flow feature finish
-# Instead, push and create PR:
-git push -u origin feature/<name>
-gh pr create --base develop --head feature/<name>
-
-# Start a hotfix
-git flow hotfix start <version>
-
-# Finish hotfix (merges to main and develop)
-git flow hotfix finish <version>
-git push origin main develop --tags
-
-# Start a release
-git flow release start <version>
-
-# Finish release
-git flow release finish <version>
-git push origin main develop --tags
+# Push and open PR targeting main
+git push -u origin feature/<slug>
+gh pr create --base main
 ```
+
+No `develop` branch. No git-flow. No backmerge.
 
 ### Important: All Changes Via PR
 
-**Both `main` and `develop` are branch-protected. No direct push allowed.**
+**`main` is branch-protected. No direct push allowed.**
 
 1. Push feature/fix branch to origin
-2. Create PR targeting `develop` (features/fixes) or `main` (releases/hotfixes)
+2. Create PR targeting `main`
 3. CI must pass (`test (20)` + `test (22)`)
 4. Squash merge only — one commit per PR
 5. **Close the corresponding issue** when merging (use `Fixes #N` or `Closes #N` in the PR description)
@@ -171,42 +157,60 @@ When creating new issues:
 
 ## Release Process
 
-### Release Pipeline (Local + CI)
+### How Releases Work (Changesets)
 
-One command kicks off the release via PR — CI handles the rest on merge:
+DeClaw uses [Changesets](https://github.com/changesets/changesets) for automated versioning and publishing. The flow aligns with mastra, langchain, and other major TypeScript projects.
+
+**Step 1 — When opening a PR, add a changeset:**
 
 ```bash
-bash scripts/release.sh patch   # 0.2.2 → 0.2.3
-bash scripts/release.sh minor   # 0.2.2 → 0.3.0
-bash scripts/release.sh major   # 0.2.2 → 1.0.0
+npx changeset add
+# → select: patch / minor / major
+# → write one line describing the change
+# → commit the generated .changeset/xxx.md alongside your code
 ```
 
-**Local (`scripts/release.sh`):**
-1. **Preflight**: verifies on `main`, clean tree, synced with remote
-2. **Build + test**: `npm run build` + `node --test test/*.test.mjs`
-3. **Version bump**: syncs all 3 version-bearing files
-4. **Changelog check**: warns if `CHANGELOG.md` is missing new version section
-5. **Create Release PR**: pushes `release/vX.Y.Z` branch → creates PR targeting `main`
+**Step 2 — Merge PR to `main`.**
 
-**CI (`.github/workflows/release.yml`, triggered when `release/v*` PR merges into `main`):**
-6. **Build + test gate**: Node 20 + 22 matrix
-7. **Tag + GitHub Release**: creates `vX.Y.Z` tag + auto-generated release notes → triggers npm publish
-8. **ClawHub publish**: `npx clawhub@latest publish` with `CLAWHUB_TOKEN` secret
-9. **Backmerge**: main → develop (via github-actions bot)
+CI (`release.yml`) detects the new changeset and automatically creates or updates a **"Version Packages" PR** that:
+- Bumps `package.json`, `openclaw.plugin.json`, `skills/declaw/SKILL.md`
+- Updates `CHANGELOG.md`
+
+**Step 3 — Merge the "Version Packages" PR.**
+
+CI runs again and automatically:
+1. Publishes to npm (`NPM_TOKEN`)
+2. Creates GitHub Release + tag
+3. Publishes skill to ClawHub (`CLAWHUB_TOKEN`)
+
+No manual version bumping, no release scripts, no backmerge.
 
 ### CI Workflows
 
 | Workflow | Trigger | What it does |
 |---|---|---|
-| `release.yml` | Release PR merged into `main` | Verify → Tag → GH Release → ClawHub → Backmerge |
-| `publish.yml` | GH Release published | npm publish with `NPM_TOKEN` |
-| `test.yml` | Push/PR to main/develop | Build + test (Node 20+22) |
+| `release.yml` | Push to `main` | Changesets: create Version PR or publish npm + GH Release + ClawHub |
+| `publish.yml` | `workflow_dispatch` only | Emergency manual npm publish |
+| `test.yml` | Push/PR to `main` | Build + test (Node 20+22) |
 | `auto-close-issues.yml` | PR merged | Close linked issues |
-| `bootstrap-health.yml` | Scheduled | Ping all 5 bootstrap nodes |
+| `bootstrap-health.yml` | Scheduled (every 6h) | Ping all 5 bootstrap nodes |
+
+### Branch Strategy
+
+`main` is the only long-lived branch. All feature/fix branches target `main` directly:
+
+```bash
+git checkout -b feature/<slug>     # or fix/<slug>
+# ... make changes + npx changeset add ...
+git push -u origin feature/<slug>
+gh pr create --base main
+```
+
+No `develop` branch. No backmerge.
 
 ### Branch Protection
 
-Both `main` and `develop` are protected:
+`main` is protected:
 - **No direct push** — all changes via PR (squash merge only)
 - **Required CI**: `test (20)` + `test (22)` must pass
 - **No force push** or branch deletion
@@ -219,12 +223,25 @@ Both `main` and `develop` are protected:
 - **Auto-delete branches**: merged PR branches are cleaned up automatically
 - **Required secrets**: `NPM_TOKEN` (npm), `CLAWHUB_TOKEN` (ClawHub)
 
-### Pre-release: Update CHANGELOG
+### Version-bearing Files
 
-Before running the release script, update `CHANGELOG.md`:
-- Add a `[X.Y.Z] - YYYY-MM-DD` section
-- Categorize entries: `Breaking Changes`, `Added`, `Changed`, `Fixed`
-- Reference issues and PRs (e.g., `PR #8`, `Closes #7`)
+`scripts/sync-version.mjs` (run automatically by `npm run version`) keeps these in sync:
+
+| File | Field |
+|---|---|
+| `package.json` | `"version"` (canonical source — bumped by Changesets) |
+| `package-lock.json` | `"version"` (auto-updated) |
+| `openclaw.plugin.json` | `"version"` |
+| `skills/declaw/SKILL.md` | `version:` in YAML frontmatter |
+
+### Versioning
+
+Semantic versioning: `vMAJOR.MINOR.PATCH`
+- MAJOR: Breaking changes (in 0.x phase, MINOR covers breaking changes)
+- MINOR: New features
+- PATCH: Bug fixes
+
+When adding a changeset, choose accordingly.
 
 ### Bootstrap Node Deployment
 - Only needed when `bootstrap/server.mjs` or `bootstrap/package.json` changes
