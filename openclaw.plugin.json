@@ -3,8 +3,12 @@
   "name": "DeClaw",
   "description": "Direct encrypted P2P communication between OpenClaw instances via Yggdrasil IPv6",
   "version": "0.2.3",
-  "channels": ["declaw"],
-  "skills": ["./skills/declaw"],
+  "channels": [
+    "declaw"
+  ],
+  "skills": [
+    "./skills/declaw"
+  ],
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
@@ -24,17 +28,31 @@
       },
       "yggdrasil_peers": {
         "type": "array",
-        "items": { "type": "string" },
+        "items": {
+          "type": "string"
+        },
         "description": "Additional Yggdrasil bootstrap peers"
       },
       "test_mode": {
-        "oneOf": [{ "type": "boolean" }, { "type": "string", "enum": ["auto"] }],
+        "oneOf": [
+          {
+            "type": "boolean"
+          },
+          {
+            "type": "string",
+            "enum": [
+              "auto"
+            ]
+          }
+        ],
         "default": "auto",
         "description": "\"auto\" (default): use Yggdrasil if available, otherwise local-only. true: force local-only. false: require Yggdrasil."
       },
       "bootstrap_peers": {
         "type": "array",
-        "items": { "type": "string" },
+        "items": {
+          "type": "string"
+        },
         "description": "Bootstrap node Yggdrasil addresses for DHT peer discovery"
       },
       "discovery_interval_ms": {
@@ -50,13 +68,31 @@
     }
   },
   "uiHints": {
-    "agent_name": { "label": "Agent Name", "placeholder": "Alice's coder" },
-    "peer_port": { "label": "Peer Server Port", "placeholder": "8099" },
-    "data_dir": { "label": "Data Directory" },
-    "yggdrasil_peers": { "label": "Extra Yggdrasil Peers" },
-    "test_mode": { "label": "Test Mode (no Yggdrasil)" },
-    "bootstrap_peers": { "label": "Bootstrap Peers" },
-    "discovery_interval_ms": { "label": "Discovery Interval (ms)" },
-    "startup_delay_ms": { "label": "Bootstrap Startup Delay (ms)" }
+    "agent_name": {
+      "label": "Agent Name",
+      "placeholder": "Alice's coder"
+    },
+    "peer_port": {
+      "label": "Peer Server Port",
+      "placeholder": "8099"
+    },
+    "data_dir": {
+      "label": "Data Directory"
+    },
+    "yggdrasil_peers": {
+      "label": "Extra Yggdrasil Peers"
+    },
+    "test_mode": {
+      "label": "Test Mode (no Yggdrasil)"
+    },
+    "bootstrap_peers": {
+      "label": "Bootstrap Peers"
+    },
+    "discovery_interval_ms": {
+      "label": "Discovery Interval (ms)"
+    },
+    "startup_delay_ms": {
+      "label": "Bootstrap Startup Delay (ms)"
+    }
   }
 }

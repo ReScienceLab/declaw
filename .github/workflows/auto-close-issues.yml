@@ -3,7 +3,7 @@ name: Auto Close Issues on PR Merge
 on:
   pull_request:
     types: [closed]
-    branches: [develop, main]
+    branches: [main]
 
 jobs:
   close-issues:
