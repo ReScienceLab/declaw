@@ -1,17 +1,16 @@
 /**
  * DeClaw — OpenClaw plugin entry point.
  *
- * Enables direct P2P communication between OpenClaw instances via Yggdrasil IPv6.
- * Each node gets a globally-routable 200::/8 address derived from its Ed25519 keypair.
- * Messages are signed and verified at the application layer (Ed25519).
- * The Yggdrasil network layer provides additional cryptographic routing guarantees.
+ * Enables direct P2P communication between OpenClaw instances via multiple
+ * transport backends: Yggdrasil IPv6 overlay (preferred) or QUIC/UDP (zero-install fallback).
+ * Messages are signed and verified at the application layer (Ed25519) regardless of transport.
  *
  * Usage after install:
- *   openclaw p2p status               — show your Yggdrasil address
- *   openclaw p2p add <ygg-addr>       — add a peer
+ *   openclaw p2p status               — show your address and active transport
+ *   openclaw p2p add <addr>           — add a peer
  *   openclaw p2p peers                — list known peers
- *   openclaw p2p send <ygg-addr> <m>  — send a direct message
- *   openclaw p2p ping <ygg-addr>      — check reachability
+ *   openclaw p2p send <addr> <m>      — send a direct message
+ *   openclaw p2p ping <addr>          — check reachability
  *   /p2p-status                       — show status in chat
  */
 import * as os from "os";
@@ -21,11 +20,14 @@ import { loadOrCreateIdentity, getActualIpv6 } from "./identity";
 import { startYggdrasil, stopYggdrasil, isYggdrasilAvailable, detectExternalYggdrasil, getYggdrasilNetworkInfo } from "./yggdrasil";
 import { initDb, listPeers, upsertPeer, removePeer, getPeer, flushDb } from "./peer-db";
 import { startPeerServer, stopPeerServer, getInbox, setSelfMeta } from "./peer-server";
-import { sendP2PMessage, pingPeer, broadcastLeave } from "./peer-client";
+import { sendP2PMessage, pingPeer, broadcastLeave, SendOptions } from "./peer-client";
 import { bootstrapDiscovery, startDiscoveryLoop, stopDiscoveryLoop, DEFAULT_BOOTSTRAP_PEERS } from "./peer-discovery";
 import { upsertDiscoveredPeer } from "./peer-db";
 import { buildChannel, wireInboundToGateway, CHANNEL_CONFIG_SCHEMA } from "./channel";
-import { Identity, YggdrasilInfo, PluginConfig } from "./types";
+import { Identity, YggdrasilInfo, PluginConfig, PeerEndpoint } from "./types";
+import { TransportManager } from "./transport";
+import { YggdrasilTransport } from "./transport-yggdrasil";
+import { QUICTransport } from "./transport-quic";
 
 const DECLAW_TOOLS = [
   "p2p_add_peer", "p2p_discover", "p2p_list_peers",
@@ -95,9 +97,30 @@ let peerPort: number = 8099;
 let _testMode: boolean = false;
 let _startupTimer: ReturnType<typeof setTimeout> | null = null;
 let _bootstrapPeers: string[] = [];
-let _agentMeta: { name?: string; version?: string } = {};
+let _agentMeta: { name?: string; version?: string; endpoints?: PeerEndpoint[]; transport?: string } = {};
+let _transportManager: TransportManager | null = null;
+let _yggTransport: YggdrasilTransport | null = null;
+let _quicTransport: QUICTransport | null = null;
+
+/** Build SendOptions from current transport state and optional peer endpoints. */
+function buildSendOpts(peerAddr?: string): SendOptions {
+  const peer = peerAddr ? getPeer(peerAddr) : null
+  return {
+    endpoints: (peer as any)?.endpoints,
+    quicTransport: _quicTransport?.isActive() ? _quicTransport : undefined,
+  }
+}
 
 function tryConnectExternalDaemon(): YggdrasilInfo | null {
+  // Try via transport layer first
+  if (_yggTransport && identity) {
+    const ok = _yggTransport.tryHotConnect(identity)
+    if (ok) {
+      yggInfo = _yggTransport.info
+      return yggInfo
+    }
+  }
+  // Fallback to direct detection
   const ext = detectExternalYggdrasil();
   if (!ext || !identity) return null;
   yggInfo = ext;
@@ -151,27 +174,57 @@ export default function register(api: any) {
       }
       console.log(`[p2p] CGA IPv6:  ${identity.cgaIpv6}`);
 
-      if (testMode) {
-        const actualIpv6 = getActualIpv6();
-        if (actualIpv6) {
-          identity.yggIpv6 = actualIpv6;
-          console.log(`[p2p] Test mode: using actual IPv6 ${actualIpv6}`);
-        } else {
-          console.log(`[p2p] Ygg (derived): ${identity.yggIpv6}`);
-        }
-      } else {
-        console.log(`[p2p] Ygg (est): ${identity.yggIpv6} (derived, before daemon starts)`);
+      // ── Transport selection ─────────────────────────────────────────────────
+      // Register transports in priority order: Yggdrasil first, QUIC as fallback
+      _transportManager = new TransportManager();
+      _yggTransport = new YggdrasilTransport();
+      _quicTransport = new QUICTransport();
 
-        // Start Yggdrasil daemon (best-effort)
-        if (isYggdrasilAvailable()) {
-          yggInfo = await startYggdrasil(dataDir, extraPeers);
+      if (!testMode) {
+        _transportManager.register(_yggTransport);
+      }
+      _transportManager.register(_quicTransport);
+
+      const quicPort = cfg.quic_port ?? 8098;
+      const activeTransport = await _transportManager.start(identity, {
+        dataDir,
+        extraPeers,
+        testMode,
+        quicPort,
+      });
+
+      if (activeTransport) {
+        console.log(`[p2p] Active transport: ${activeTransport.id} → ${activeTransport.address}`);
+        _agentMeta.transport = activeTransport.id;
+        _agentMeta.endpoints = _transportManager.getEndpoints();
+
+        // Update identity address from Yggdrasil transport if available
+        if (_yggTransport.isActive()) {
+          yggInfo = _yggTransport.info;
           if (yggInfo) {
             identity.yggIpv6 = yggInfo.address;
             console.log(`[p2p] Yggdrasil: ${yggInfo.address}  (subnet: ${yggInfo.subnet})`);
           }
-        } else {
-          console.warn("[p2p] yggdrasil not installed — run without Yggdrasil (local network only)");
-          console.warn("[p2p] Install: https://yggdrasil-network.github.io/installation.html");
+        } else if (testMode) {
+          const actualIpv6 = getActualIpv6();
+          if (actualIpv6) {
+            identity.yggIpv6 = actualIpv6;
+            console.log(`[p2p] Test mode: using actual IPv6 ${actualIpv6}`);
+          }
+        }
+
+        if (_quicTransport.isActive()) {
+          console.log(`[p2p] QUIC endpoint: ${_quicTransport.address}`);
+        }
+      } else {
+        // No transport available — fall back to legacy behavior
+        console.warn("[p2p] No transport available — falling back to local-only mode");
+        if (testMode) {
+          const actualIpv6 = getActualIpv6();
+          if (actualIpv6) {
+            identity.yggIpv6 = actualIpv6;
+            console.log(`[p2p] Test mode: using actual IPv6 ${actualIpv6}`);
+          }
         }
       }
 
@@ -188,12 +241,15 @@ export default function register(api: any) {
       if (isFirstRun) {
         const addr = yggInfo?.address ?? identity.yggIpv6;
         const ready = yggInfo !== null;
+        const quicActive = _quicTransport?.isActive()
         const welcomeLines = [
           "Welcome to DeClaw P2P!",
           "",
           ready
             ? `Your P2P address: ${addr}`
-            : "Yggdrasil is not set up yet. Run: openclaw p2p setup",
+            : quicActive
+              ? `QUIC transport active: ${_quicTransport!.address}\nFor full overlay networking, run: openclaw p2p setup`
+              : "Yggdrasil is not set up yet. Run: openclaw p2p setup",
           "",
           "Quick start:",
           "  openclaw p2p status    — show your address",
@@ -237,17 +293,21 @@ export default function register(api: any) {
       stopDiscoveryLoop();
       // Broadcast signed leave tombstone to all known peers before shutting down
       if (identity) {
-        await broadcastLeave(identity, listPeers(), peerPort);
+        await broadcastLeave(identity, listPeers(), peerPort, buildSendOpts());
       }
       flushDb();
       await stopPeerServer();
+      if (_transportManager) {
+        await _transportManager.stop();
+        _transportManager = null;
+      }
       stopYggdrasil();
     },
   });
 
   // ── 2. OpenClaw Channel ────────────────────────────────────────────────────
   if (identity) {
-    api.registerChannel({ plugin: buildChannel(identity, peerPort) });
+    api.registerChannel({ plugin: buildChannel(identity, peerPort, buildSendOpts) });
   } else {
     // Register lazily after service starts — use a proxy channel
     // that reads identity at send-time
@@ -275,7 +335,7 @@ export default function register(api: any) {
           deliveryMode: "direct" as const,
           sendText: async ({ text, account }: { text: string; account: { yggAddr: string } }) => {
             if (!identity) return { ok: false };
-            const r = await sendP2PMessage(identity, account.yggAddr, "chat", text, peerPort);
+            const r = await sendP2PMessage(identity, account.yggAddr, "chat", text, peerPort, 10_000, buildSendOpts(account.yggAddr));
             return { ok: r.ok };
           },
         },
@@ -296,12 +356,18 @@ export default function register(api: any) {
             console.log("Plugin not started yet. Try again after gateway restart.");
             return;
           }
-          console.log("=== IPv6 P2P Node Status ===");
+          console.log("=== P2P Node Status ===");
           if (_agentMeta.name) console.log(`Agent name:     ${_agentMeta.name}`);
           console.log(`Agent ID:       ${identity.agentId}`);
           console.log(`Version:        v${_agentMeta.version}`);
           console.log(`CGA IPv6:       ${identity.cgaIpv6}`);
-          console.log(`Yggdrasil:      ${yggInfo?.address ?? identity.yggIpv6 + " (no daemon)"}`);
+          console.log(`Transport:      ${_transportManager?.active?.id ?? "none"}`);
+          if (_yggTransport?.isActive()) {
+            console.log(`Yggdrasil:      ${yggInfo?.address ?? identity.yggIpv6}`);
+          }
+          if (_quicTransport?.isActive()) {
+            console.log(`QUIC endpoint:  ${_quicTransport.address}`);
+          }
           console.log(`Peer port:      ${peerPort}`);
           console.log(`Known peers:    ${listPeers().length}`);
           console.log(`Inbox messages: ${getInbox().length}`);
@@ -359,7 +425,7 @@ export default function register(api: any) {
             console.error("Plugin not started. Restart the gateway first.");
             return;
           }
-          const result = await sendP2PMessage(identity, yggAddr, "chat", message, 8099);
+          const result = await sendP2PMessage(identity, yggAddr, "chat", message, 8099, 10_000, buildSendOpts(yggAddr));
           if (result.ok) {
             console.log(`✓ Message sent to ${yggAddr}`);
           } else {
@@ -432,10 +498,13 @@ export default function register(api: any) {
       if (!identity) return { text: "IPv6 P2P: not started yet." };
       const peers = listPeers();
       const addr = yggInfo?.address ?? identity.yggIpv6;
+      const activeTransport = _transportManager?.active;
       return {
         text: [
-          `**IPv6 P2P Node**`,
+          `**P2P Node**`,
           `Address: \`${addr}\``,
+          `Transport: ${activeTransport?.id ?? "none"}`,
+          ...(_quicTransport?.isActive() ? [`QUIC: \`${_quicTransport.address}\``] : []),
           `Peers: ${peers.length} known`,
           `Inbox: ${getInbox().length} messages`,
         ].join("\n"),
@@ -516,7 +585,7 @@ export default function register(api: any) {
         return { content: [{ type: "text", text: "Error: P2P service not started yet." }] };
       }
       // Use the peer's port (default 8099) — not peerPort which is the local listening port
-      const result = await sendP2PMessage(identity, params.ygg_addr, "chat", params.message, params.port ?? 8099);
+      const result = await sendP2PMessage(identity, params.ygg_addr, "chat", params.message, params.port ?? 8099, 10_000, buildSendOpts(params.ygg_addr));
       if (result.ok) {
         return {
           content: [{ type: "text", text: `Message delivered to ${params.ygg_addr}` }],
@@ -560,9 +629,12 @@ export default function register(api: any) {
       const addr = yggInfo?.address ?? identity.yggIpv6;
       const peers = listPeers();
       const inbox = getInbox();
+      const activeTransport = _transportManager?.active;
       const lines = [
         ...((_agentMeta.name) ? [`Agent name: ${_agentMeta.name}`] : []),
         `This agent's P2P address: ${addr}`,
+        `Active transport: ${activeTransport?.id ?? "none"}`,
+        ...(_quicTransport?.isActive() ? [`QUIC endpoint: ${_quicTransport.address}`] : []),
         `Plugin version: v${_agentMeta.version}`,
         `Known peers: ${peers.length}`,
         `Unread inbox: ${inbox.length} messages`,
@@ -634,14 +706,17 @@ export default function register(api: any) {
         };
       }
 
-      // No daemon found — guide user
+      // No daemon found — guide user, mention QUIC fallback
       const action = binaryAvailable
         ? "Yggdrasil is installed but no daemon is running."
         : "Yggdrasil is not installed.";
+      const quicStatus = _quicTransport?.isActive()
+        ? `\nQUIC fallback: active (${_quicTransport.address})\nP2P messaging works without Yggdrasil via QUIC transport.`
+        : "";
       return {
         content: [{ type: "text", text:
-          `Status: Setup needed\n${action}\n\n` +
-          `Fix: Run the automated installer:\n  openclaw p2p setup\n\n` +
+          `Status: ${_quicTransport?.isActive() ? "Degraded (QUIC only)" : "Setup needed"}\n${action}${quicStatus}\n\n` +
+          `For full Yggdrasil overlay, run:\n  openclaw p2p setup\n\n` +
           `After setup, call yggdrasil_check again — it will connect automatically.`
         }],
       };

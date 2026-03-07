@@ -29,9 +29,19 @@ export interface PeerRecord {
   lastSeen: number;
 }
 
+export type TransportType = "yggdrasil" | "quic" | "native-ipv6"
+
+/** Transport-aware endpoint for multi-transport peer discovery. */
+export interface PeerEndpoint {
+  transport: TransportType
+  address: string    // ygg addr, or host:port for QUIC
+  priority: number   // lower = preferred
+}
+
 export interface PluginConfig {
   agent_name?: string;
   peer_port?: number;
+  quic_port?: number;
   data_dir?: string;
   yggdrasil_peers?: string[];
   test_mode?: boolean | "auto";
@@ -48,8 +58,12 @@ export interface PeerAnnouncement {
   version?: string;
   timestamp: number;
   signature: string;
+  /** Active transport for this node */
+  transport?: TransportType;
+  /** Transport-aware endpoints for this node */
+  endpoints?: PeerEndpoint[];
   /** peers the sender knows about (shared for gossip) */
-  peers: Array<{ yggAddr: string; publicKey: string; alias?: string; lastSeen: number }>;
+  peers: Array<{ yggAddr: string; publicKey: string; alias?: string; lastSeen: number; endpoints?: PeerEndpoint[] }>;
 }
 
 /** Peer record with discovery metadata */
@@ -57,4 +71,6 @@ export interface DiscoveredPeerRecord extends PeerRecord {
   discoveredVia?: string;  // yggAddr of the node that told us about this peer
   source: "manual" | "bootstrap" | "gossip";
   version?: string;
+  /** Transport-aware endpoints for this peer */
+  endpoints?: PeerEndpoint[];
 }

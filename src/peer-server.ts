@@ -91,6 +91,7 @@ export async function startPeerServer(
       version: ann.version,
       discoveredVia: ann.fromYgg,
       source: "gossip",
+      endpoints: ann.endpoints,
     });
 
     // Absorb the peers they shared — preserve provenance timestamp
@@ -101,6 +102,7 @@ export async function startPeerServer(
         discoveredVia: ann.fromYgg,
         source: "gossip",
         lastSeen: p.lastSeen,
+        endpoints: p.endpoints,
       });
     }
 

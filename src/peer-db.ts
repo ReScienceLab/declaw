@@ -4,7 +4,7 @@
  */
 import * as fs from "fs";
 import * as path from "path";
-import { PeerRecord, DiscoveredPeerRecord } from "./types";
+import { PeerRecord, DiscoveredPeerRecord, PeerEndpoint } from "./types";
 
 interface PeerStore {
   peers: Record<string, DiscoveredPeerRecord>;
@@ -77,7 +77,7 @@ export function upsertPeer(yggAddr: string, alias: string = ""): void {
 export function upsertDiscoveredPeer(
   yggAddr: string,
   publicKey: string,
-  opts: { alias?: string; version?: string; discoveredVia?: string; source?: "bootstrap" | "gossip"; lastSeen?: number } = {}
+  opts: { alias?: string; version?: string; discoveredVia?: string; source?: "bootstrap" | "gossip"; lastSeen?: number; endpoints?: PeerEndpoint[] } = {}
 ): void {
   const now = Date.now();
   const existing = store.peers[yggAddr];
@@ -90,6 +90,7 @@ export function upsertDiscoveredPeer(
     }
     if (!existing.discoveredVia) existing.discoveredVia = opts.discoveredVia;
     if (opts.version) existing.version = opts.version;
+    if (opts.endpoints?.length) existing.endpoints = opts.endpoints;
     // Refresh remote-declared name for non-manual peers
     if (opts.alias && existing.source !== "manual") existing.alias = opts.alias;
   } else {
@@ -102,6 +103,7 @@ export function upsertDiscoveredPeer(
       lastSeen: opts.lastSeen ?? now,
       source: opts.source ?? "gossip",
       discoveredVia: opts.discoveredVia,
+      endpoints: opts.endpoints,
     };
   }
   save();
