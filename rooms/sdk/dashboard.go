@@ -13,11 +13,12 @@ import (
 
 // DashboardServer serves the WebSocket + static files dashboard.
 type DashboardServer struct {
-	port      int
-	staticDir string
-	server    *http.Server
-	clients   sync.Map // *websocket.Conn → struct{}
-	getState  func() any
+	port       int
+	staticDir  string
+	server     *http.Server
+	clients    sync.Map // *websocket.Conn → struct{}
+	getState   func() any
+	roomServer *Server // back-reference for admin API
 }
 
 func newDashboard(port int, staticDir string) *DashboardServer {
@@ -36,6 +37,13 @@ func (d *DashboardServer) Start() error {
 
 	// WebSocket endpoint
 	mux.Handle("/ws", websocket.Handler(d.handleWS))
+
+	// Admin API endpoints
+	mux.HandleFunc("/api/lobby", d.handleAPILobby)
+	mux.HandleFunc("/api/start", d.handleAPIStart)
+	mux.HandleFunc("/api/reset", d.handleAPIReset)
+	mux.HandleFunc("/api/invites", d.handleAPIInvites)
+	mux.HandleFunc("/api/kick", d.handleAPIKick)
 
 	// Static files
 	mux.Handle("/", http.FileServer(http.Dir(d.staticDir)))
@@ -95,4 +103,110 @@ func (d *DashboardServer) handleWS(conn *websocket.Conn) {
 			break
 		}
 	}
+}
+
+// ── Admin API handlers ────────────────────────────────────────────────────────
+
+func (d *DashboardServer) jsonReply(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+func (d *DashboardServer) handleAPILobby(w http.ResponseWriter, r *http.Request) {
+	if d.roomServer == nil {
+		d.jsonReply(w, 500, map[string]string{"error": "not initialized"})
+		return
+	}
+	d.jsonReply(w, 200, d.roomServer.adminLobbyState())
+}
+
+func (d *DashboardServer) handleAPIStart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		d.jsonReply(w, 405, map[string]string{"error": "POST only"})
+		return
+	}
+	if d.roomServer == nil {
+		d.jsonReply(w, 500, map[string]string{"error": "not initialized"})
+		return
+	}
+	if err := d.roomServer.AdminStartGame(); err != nil {
+		d.jsonReply(w, 409, map[string]string{"error": err.Error()})
+		return
+	}
+	d.jsonReply(w, 200, map[string]string{"status": "started"})
+}
+
+func (d *DashboardServer) handleAPIReset(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		d.jsonReply(w, 405, map[string]string{"error": "POST only"})
+		return
+	}
+	if d.roomServer == nil {
+		d.jsonReply(w, 500, map[string]string{"error": "not initialized"})
+		return
+	}
+	d.roomServer.AdminResetRoom()
+	go d.roomServer.runLobby(r.Context())
+	d.jsonReply(w, 200, map[string]string{"status": "reset"})
+}
+
+func (d *DashboardServer) handleAPIInvites(w http.ResponseWriter, r *http.Request) {
+	if d.roomServer == nil {
+		d.jsonReply(w, 500, map[string]string{"error": "not initialized"})
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		d.jsonReply(w, 200, d.roomServer.InviteGetAll())
+	case http.MethodPost:
+		var body struct {
+			Addr  string `json:"addr"`
+			Label string `json:"label"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Addr == "" {
+			d.jsonReply(w, 400, map[string]string{"error": "need addr"})
+			return
+		}
+		d.roomServer.InviteAdd(body.Addr, body.Label)
+		d.roomServer.BroadcastWS(map[string]any{
+			"event": "lobby",
+			"data":  d.roomServer.adminLobbyState(),
+		})
+		d.jsonReply(w, 200, map[string]string{"status": "added"})
+	case http.MethodDelete:
+		addr := r.URL.Query().Get("addr")
+		if addr == "" {
+			d.jsonReply(w, 400, map[string]string{"error": "need addr query param"})
+			return
+		}
+		d.roomServer.InviteRemove(addr)
+		d.roomServer.BroadcastWS(map[string]any{
+			"event": "lobby",
+			"data":  d.roomServer.adminLobbyState(),
+		})
+		d.jsonReply(w, 200, map[string]string{"status": "removed"})
+	default:
+		d.jsonReply(w, 405, map[string]string{"error": "GET/POST/DELETE only"})
+	}
+}
+
+func (d *DashboardServer) handleAPIKick(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		d.jsonReply(w, 405, map[string]string{"error": "POST only"})
+		return
+	}
+	if d.roomServer == nil {
+		d.jsonReply(w, 500, map[string]string{"error": "not initialized"})
+		return
+	}
+	var body struct {
+		Seat string `json:"seat"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Seat == "" {
+		d.jsonReply(w, 400, map[string]string{"error": "need seat"})
+		return
+	}
+	d.roomServer.KickSeat(body.Seat)
+	d.jsonReply(w, 200, map[string]string{"status": "kicked"})
 }

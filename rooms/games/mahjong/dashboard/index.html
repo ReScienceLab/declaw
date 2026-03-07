@@ -468,6 +468,133 @@
     color: var(--tile-back);
     background: rgba(240,151,76,0.1);
   }
+
+  /* ── Admin control panel ───────────────────────── */
+  .admin-panel {
+    padding: 10px 14px;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+  }
+  .admin-panel h3 {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--gold);
+    margin-bottom: 8px;
+    font-family: 'Concert One', sans-serif;
+    letter-spacing: 0.5px;
+  }
+  .admin-btn {
+    display: block;
+    width: 100%;
+    padding: 8px 12px;
+    margin-bottom: 6px;
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 6px;
+    background: rgba(255,255,255,0.06);
+    color: var(--text);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+    font-family: 'Noto Sans', sans-serif;
+  }
+  .admin-btn:hover { background: rgba(255,255,255,0.12); }
+  .admin-btn.primary {
+    background: rgba(76,175,80,0.2);
+    border-color: rgba(76,175,80,0.4);
+    color: #81c784;
+  }
+  .admin-btn.primary:hover { background: rgba(76,175,80,0.35); }
+  .admin-btn.danger {
+    background: rgba(244,67,54,0.15);
+    border-color: rgba(244,67,54,0.3);
+    color: #e57373;
+  }
+  .admin-btn.danger:hover { background: rgba(244,67,54,0.3); }
+  .admin-btn:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+  }
+  .admin-seats {
+    margin: 8px 0;
+  }
+  .admin-seat-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 0;
+    font-size: 11px;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+  }
+  .admin-seat-row .wind { color: var(--gold); width: 16px; font-family: 'Ma Shan Zheng', cursive; }
+  .admin-seat-row .name { flex: 1; color: rgba(255,255,255,0.7); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .admin-seat-row .kick-btn {
+    font-size: 9px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    border: 1px solid rgba(244,67,54,0.3);
+    background: transparent;
+    color: #e57373;
+    cursor: pointer;
+  }
+  .admin-seat-row .kick-btn:hover { background: rgba(244,67,54,0.2); }
+  .invite-section { margin-top: 8px; }
+  .invite-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-bottom: 4px;
+    font-size: 10px;
+  }
+  .invite-row .addr {
+    flex: 1;
+    color: rgba(255,255,255,0.5);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: monospace;
+  }
+  .invite-row .label { color: var(--tile-blue); }
+  .invite-row .rm-btn {
+    font-size: 9px;
+    padding: 1px 4px;
+    border-radius: 2px;
+    border: 1px solid rgba(255,255,255,0.15);
+    background: transparent;
+    color: rgba(255,255,255,0.4);
+    cursor: pointer;
+  }
+  .invite-input-row {
+    display: flex;
+    gap: 4px;
+    margin-top: 4px;
+  }
+  .invite-input-row input {
+    flex: 1;
+    padding: 4px 6px;
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 4px;
+    background: rgba(0,0,0,0.3);
+    color: var(--text);
+    font-size: 10px;
+    font-family: monospace;
+    outline: none;
+  }
+  .invite-input-row input:focus { border-color: var(--tile-blue); }
+  .invite-input-row button {
+    padding: 4px 8px;
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 4px;
+    background: rgba(255,255,255,0.06);
+    color: var(--text);
+    font-size: 10px;
+    cursor: pointer;
+  }
+  .admin-status {
+    font-size: 10px;
+    color: rgba(255,255,255,0.4);
+    margin-top: 4px;
+    text-align: center;
+  }
 </style>
 </head>
 <body>
@@ -559,6 +686,22 @@
   </div>
 
   <div class="log-panel">
+    <!-- Admin control panel -->
+    <div class="admin-panel" id="admin-panel">
+      <h3>GAME CONTROL</h3>
+      <button class="admin-btn primary" id="btn-start" onclick="adminStart()">Start Game</button>
+      <button class="admin-btn danger" id="btn-reset" onclick="adminReset()">Reset Room</button>
+      <div class="admin-seats" id="admin-seats"></div>
+      <div class="admin-status" id="admin-status">Lobby — waiting for players</div>
+      <h3 style="margin-top:12px">INVITE LIST</h3>
+      <div class="invite-section" id="invite-list"></div>
+      <div class="invite-input-row">
+        <input id="invite-addr" placeholder="Ygg IPv6 address" />
+        <input id="invite-label" placeholder="Label" style="max-width:60px" />
+        <button onclick="adminInviteAdd()">+</button>
+      </div>
+    </div>
+
     <div class="log-header">
       <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14m0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16"/><path d="m8.93 6.588-2.29.287-.082.38.45.083c.294.07.352.176.288.469l-.738 3.468c-.194.897.105 1.319.808 1.319.545 0 1.178-.252 1.465-.598l.088-.416c-.2.176-.492.246-.686.246-.275 0-.375-.193-.304-.533zM9 4.5a1 1 0 1 1-2 0 1 1 0 0 1 2 0"/></svg>
       P2P Stream

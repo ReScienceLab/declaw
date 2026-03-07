@@ -201,11 +201,116 @@ function connect() {
       case 'state':    renderState(d); break
       case 'move':     renderMove(d); break
       case 'thinking': renderThinking(d); break
-      case 'lobby':    renderLobby(d); break
+      case 'lobby':    renderLobby(d); renderAdminPanel(d); break
       case 'gameover': showGameover(d); break
       case 'p2p':      appendLog(d.from, d.to, d.type, d.summary, d.ts); break
     }
   }
 }
+
+// ── Admin control panel ────────────────────────────────────────────────────
+
+let lobbyData = null
+
+function renderAdminPanel(d) {
+  lobbyData = d
+  const seatsEl = $('admin-seats')
+  const statusEl = $('admin-status')
+  const startBtn = $('btn-start')
+
+  if (!seatsEl) return
+
+  seatsEl.innerHTML = ''
+  const windChars = { east: '东', south: '南', west: '西', north: '北' }
+  for (const seat of SEATS) {
+    const p = d.participants?.[seat]
+    const row = document.createElement('div')
+    row.className = 'admin-seat-row'
+    row.innerHTML = `<span class="wind">${windChars[seat]}</span>` +
+      `<span class="name">${p ? p.name : '(empty)'}</span>` +
+      (p && !d.gameStarted ? `<button class="kick-btn" onclick="adminKick('${seat}')">kick</button>` : '')
+    seatsEl.appendChild(row)
+  }
+
+  const occupied = d.occupied || 0
+  const slots = d.slots || 4
+  if (d.gameStarted) {
+    statusEl.textContent = 'Game in progress'
+    startBtn.disabled = true
+    startBtn.textContent = 'In Progress'
+  } else {
+    statusEl.textContent = `Lobby — ${occupied}/${slots} players`
+    startBtn.disabled = false
+    startBtn.textContent = occupied > 0 ? `Start Game (${occupied}/${slots})` : 'Start Game'
+  }
+
+  const inviteEl = $('invite-list')
+  if (inviteEl && d.invites) {
+    inviteEl.innerHTML = ''
+    for (const [addr, label] of Object.entries(d.invites)) {
+      const row = document.createElement('div')
+      row.className = 'invite-row'
+      row.innerHTML = `<span class="label">${label || ''}</span>` +
+        `<span class="addr">${addr}</span>` +
+        `<button class="rm-btn" onclick="adminInviteRemove('${addr}')">x</button>`
+      inviteEl.appendChild(row)
+    }
+    if (Object.keys(d.invites).length === 0) {
+      inviteEl.innerHTML = '<div style="font-size:9px;color:rgba(255,255,255,0.3);text-align:center">Open to all (no whitelist)</div>'
+    }
+  }
+}
+
+async function adminStart() {
+  try {
+    const r = await fetch('/api/start', { method: 'POST' })
+    const d = await r.json()
+    if (!r.ok) alert(d.error || 'Failed')
+  } catch (e) { alert('Error: ' + e.message) }
+}
+
+async function adminReset() {
+  if (!confirm('Reset the room? All players will be removed.')) return
+  try {
+    const r = await fetch('/api/reset', { method: 'POST' })
+    const d = await r.json()
+    if (!r.ok) alert(d.error || 'Failed')
+  } catch (e) { alert('Error: ' + e.message) }
+}
+
+async function adminKick(seat) {
+  try {
+    await fetch('/api/kick', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ seat })
+    })
+  } catch (e) { alert('Error: ' + e.message) }
+}
+
+async function adminInviteAdd() {
+  const addr = $('invite-addr').value.trim()
+  const label = $('invite-label').value.trim()
+  if (!addr) return
+  try {
+    const r = await fetch('/api/invites', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ addr, label })
+    })
+    if (r.ok) {
+      $('invite-addr').value = ''
+      $('invite-label').value = ''
+    }
+  } catch (e) { alert('Error: ' + e.message) }
+}
+
+async function adminInviteRemove(addr) {
+  try {
+    await fetch('/api/invites?addr=' + encodeURIComponent(addr), { method: 'DELETE' })
+  } catch (e) { alert('Error: ' + e.message) }
+}
+
+fetch('/api/lobby').then(r => r.json()).then(renderAdminPanel).catch(() => {})
 
 connect()

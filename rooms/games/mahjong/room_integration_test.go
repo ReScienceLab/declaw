@@ -274,7 +274,18 @@ func TestMahjongRoom_HTTP(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 
-	// Wait for game to start (lobby full → OnLobbyComplete)
+	// Trigger game start via admin API (manual start mode)
+	startResp, err := http.Post(
+		fmt.Sprintf("http://127.0.0.1:%d/api/start", dashPort),
+		"application/json", nil,
+	)
+	if err != nil {
+		t.Fatalf("admin start: %v", err)
+	}
+	startResp.Body.Close()
+	t.Logf("Admin start triggered (status=%d)", startResp.StatusCode)
+
+	// Wait for game to start
 	deadline2 := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline2) {
 		room.mu.Lock()

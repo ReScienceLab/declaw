@@ -82,6 +82,15 @@ type Server struct {
 
 	// pendingActions: seat → chan json.RawMessage
 	pendingActions sync.Map
+
+	// Invite whitelist: if non-empty, only these Ygg addresses may join
+	inviteMu   sync.RWMutex
+	inviteList map[string]string // yggAddr → label
+
+	// Manual start: game waits for admin /api/start
+	startCh     chan struct{}
+	startOnce   sync.Once
+	gameStarted bool
 }
 
 // NewServer creates a new Room Server from the given config.
@@ -112,6 +121,8 @@ func NewServer(cfg ServerConfig) *Server {
 		seats:        seats,
 		participants: make(map[string]*ParticipantRecord),
 		lobbyDone:    make(chan struct{}),
+		inviteList:   make(map[string]string),
+		startCh:      make(chan struct{}),
 	}
 }
 
@@ -155,6 +166,7 @@ func (s *Server) Start(ctx context.Context) error {
 		staticDir = filepath.Join(filepath.Dir(os.Args[0]), "dashboard")
 	}
 	s.dashboard = newDashboard(s.cfg.DashPort, staticDir)
+	s.dashboard.roomServer = s
 	if err := s.dashboard.Start(); err != nil {
 		log.Printf("[room] Dashboard warning: %v", err)
 	}
@@ -190,15 +202,26 @@ func (s *Server) Start(ctx context.Context) error {
 }
 
 func (s *Server) runLobby(ctx context.Context) {
-	log.Printf("[room] Lobby open — waiting up to 90s for %d players", s.cfg.Slots)
+	log.Printf("[room] Lobby open — waiting for admin to start game via dashboard")
 	select {
-	case <-s.lobbyDone:
-		log.Printf("[room] Lobby full")
-	case <-time.After(90 * time.Second):
-		log.Printf("[room] Lobby timeout — filling with bots")
+	case <-s.startCh:
+		log.Printf("[room] Admin started the game")
 	case <-ctx.Done():
 		return
 	}
+	// Fill empty seats with bots
+	s.mu.Lock()
+	for _, seat := range s.seats {
+		if _, taken := s.participants[seat]; !taken {
+			s.participants[seat] = &ParticipantRecord{Name: "Bot-" + seat, IsBot: true}
+			log.Printf("[room] Filling %s with bot", seat)
+		}
+	}
+	s.mu.Unlock()
+	s.BroadcastWS(map[string]any{
+		"event": "lobby",
+		"data":  s.adminLobbyState(),
+	})
 	if err := s.cfg.Room.OnLobbyComplete(); err != nil {
 		log.Printf("[room] OnLobbyComplete error: %v", err)
 	}
@@ -338,7 +361,23 @@ func (s *Server) handleIncomingMessage(msg P2PMessage, verified bool) {
 }
 
 func (s *Server) handleJoin(yggAddr, name string) {
+	// Check invite whitelist
+	s.inviteMu.RLock()
+	hasInvites := len(s.inviteList) > 0
+	_, invited := s.inviteList[yggAddr]
+	s.inviteMu.RUnlock()
+	if hasInvites && !invited {
+		log.Printf("[room] Join from %s rejected — not invited", yggAddr[:min(20, len(yggAddr))])
+		return
+	}
+
 	s.mu.Lock()
+	// Reject if game already started
+	if s.gameStarted {
+		s.mu.Unlock()
+		log.Printf("[room] Join from %s rejected — game in progress", yggAddr[:min(20, len(yggAddr))])
+		return
+	}
 	// Check already registered
 	for _, p := range s.participants {
 		if p.YggAddr == yggAddr {
@@ -413,6 +452,105 @@ func (s *Server) updateSelfMeta() {
 		Alias:     alias,
 		Version:   "0.1.0",
 	})
+}
+
+// ── Admin API methods (used by dashboard) ─────────────────────────────────────
+
+func (s *Server) adminLobbyState() map[string]any {
+	s.mu.RLock()
+	participants := make(map[string]any)
+	for seat, p := range s.participants {
+		participants[seat] = map[string]any{"name": p.Name, "yggAddr": p.YggAddr}
+	}
+	occupied := len(s.participants)
+	started := s.gameStarted
+	s.mu.RUnlock()
+
+	return map[string]any{
+		"state":        "LOBBY",
+		"participants": participants,
+		"slots":        s.cfg.Slots,
+		"occupied":     occupied,
+		"gameStarted":  started,
+		"invites":      s.InviteGetAll(),
+	}
+}
+
+// AdminStartGame triggers the game start from the dashboard.
+func (s *Server) AdminStartGame() error {
+	s.mu.Lock()
+	if s.gameStarted {
+		s.mu.Unlock()
+		return fmt.Errorf("game already started")
+	}
+	s.gameStarted = true
+	s.mu.Unlock()
+	s.startOnce.Do(func() { close(s.startCh) })
+	return nil
+}
+
+// AdminResetRoom resets the room to lobby state.
+func (s *Server) AdminResetRoom() {
+	s.mu.Lock()
+	s.participants = make(map[string]*ParticipantRecord)
+	s.gameStarted = false
+	s.lobbyDone = make(chan struct{})
+	s.lobbyOnce = sync.Once{}
+	s.startCh = make(chan struct{})
+	s.startOnce = sync.Once{}
+	s.mu.Unlock()
+
+	s.updateSelfMeta()
+	s.BroadcastWS(map[string]any{
+		"event": "lobby",
+		"data":  s.adminLobbyState(),
+	})
+	log.Printf("[room] Room reset by admin")
+}
+
+// InviteAdd adds an address to the invite whitelist.
+func (s *Server) InviteAdd(addr, label string) {
+	s.inviteMu.Lock()
+	s.inviteList[addr] = label
+	s.inviteMu.Unlock()
+	log.Printf("[room] Invite added: %s (%s)", addr, label)
+}
+
+// InviteRemove removes an address from the invite whitelist.
+func (s *Server) InviteRemove(addr string) {
+	s.inviteMu.Lock()
+	delete(s.inviteList, addr)
+	s.inviteMu.Unlock()
+}
+
+// InviteGetAll returns the current invite list.
+func (s *Server) InviteGetAll() map[string]string {
+	s.inviteMu.RLock()
+	defer s.inviteMu.RUnlock()
+	out := make(map[string]string, len(s.inviteList))
+	for k, v := range s.inviteList {
+		out[k] = v
+	}
+	return out
+}
+
+// KickSeat removes a participant from a seat.
+func (s *Server) KickSeat(seat string) {
+	s.mu.Lock()
+	p := s.participants[seat]
+	if p != nil {
+		delete(s.participants, seat)
+	}
+	s.mu.Unlock()
+	if p != nil {
+		s.updateSelfMeta()
+		_ = s.cfg.Room.OnParticipantLeave(seat)
+		s.BroadcastWS(map[string]any{
+			"event": "lobby",
+			"data":  s.adminLobbyState(),
+		})
+		log.Printf("[room] Kicked %s from %s", p.Name, seat)
+	}
 }
 
 func (s *Server) logP2P(fromAddr, toAddr string, payload any) {
