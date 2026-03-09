@@ -51,9 +51,10 @@ export function isYggdrasilAddr(addr: string): boolean {
 
 export async function startPeerServer(
   port: number = 8099,
-  opts: { testMode?: boolean } = {}
+  opts: { testMode?: boolean; yggdrasilActive?: boolean } = {}
 ): Promise<void> {
   const testMode = opts.testMode ?? false
+  const yggActive = opts.yggdrasilActive ?? false
   server = Fastify({ logger: false })
 
   server.get("/peer/ping", async () => ({ ok: true, ts: Date.now() }))
@@ -62,6 +63,12 @@ export async function startPeerServer(
 
   server.post("/peer/announce", async (req, reply) => {
     const ann = req.body as any
+    const srcIp = (req.socket.remoteAddress ?? "").replace(/^::ffff:/, "")
+
+    // Network-layer gate: when Yggdrasil is active, only accept from 200::/7
+    if (yggActive && !testMode && !isYggdrasilAddr(srcIp)) {
+      return reply.code(403).send({ error: `Non-Yggdrasil source ${srcIp} rejected` })
+    }
 
     const { signature, ...signable } = ann
     if (!verifySignature(ann.publicKey, signable as Record<string, unknown>, signature)) {
@@ -108,6 +115,11 @@ export async function startPeerServer(
 
   server.post("/peer/message", async (req, reply) => {
     const raw = req.body as any
+    const srcIp = (req.socket.remoteAddress ?? "").replace(/^::ffff:/, "")
+
+    if (yggActive && !testMode && !isYggdrasilAddr(srcIp)) {
+      return reply.code(403).send({ error: `Non-Yggdrasil source ${srcIp} rejected` })
+    }
 
     const sigData = canonical(raw)
     if (!verifySignature(raw.publicKey, sigData, raw.signature)) {

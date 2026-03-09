@@ -185,7 +185,7 @@ export default function register(api: any) {
         }
       }
 
-      await startPeerServer(peerPort, { testMode })
+      await startPeerServer(peerPort, { testMode, yggdrasilActive: _yggTransport?.isActive() ?? false })
 
       setSelfMeta({
         agentId: identity.agentId,
