@@ -151,6 +151,39 @@ export function verifySignature(
 
 // ── Utility ─────────────────────────────────────────────────────────────────
 
+/**
+ * Returns true if addr is a globally-routable unicast IPv6 address (2000::/3).
+ * Excludes: link-local (fe80::/10), ULA (fc00::/7), loopback (::1),
+ * and Yggdrasil overlay (200::/7 — first group 0x0200–0x03ff).
+ */
+export function isGlobalUnicastIPv6(addr: string): boolean {
+  if (!addr || !addr.includes(":")) return false
+  const clean = addr.replace(/^::ffff:/i, "").toLowerCase()
+  if (clean === "::1") return false
+  if (clean.startsWith("fe80:")) return false
+  if (clean.startsWith("fc") || clean.startsWith("fd")) return false
+  // Global unicast 2000::/3: first 16-bit group is 0x2000–0x3fff
+  const first = parseInt(clean.split(":")[0].padStart(4, "0"), 16)
+  return first >= 0x2000 && first <= 0x3fff
+}
+
+/**
+ * Returns the first globally-routable public IPv6 address found on any interface.
+ * Returns null if none found (NAT/IPv4-only or ULA-only environment).
+ */
+export function getPublicIPv6(): string | null {
+  const ifaces = os.networkInterfaces()
+  for (const iface of Object.values(ifaces)) {
+    if (!iface) continue
+    for (const info of iface) {
+      if (info.family === "IPv6" && !info.internal && isGlobalUnicastIPv6(info.address)) {
+        return info.address
+      }
+    }
+  }
+  return null
+}
+
 export function getActualIpv6(): string | null {
   const ifaces = os.networkInterfaces()
   for (const iface of Object.values(ifaces)) {

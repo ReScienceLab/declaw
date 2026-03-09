@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Demo replay — curated output of a real DeClaw simulation run
+# Demo replay — curated output of a real DAP simulation run
 # Run this to preview; VHS records it to produce demo.gif
 
 G='\033[0;32m'; C='\033[0;36m'; Y='\033[1;33m'; B='\033[0;34m'
@@ -11,7 +11,7 @@ hr() { p "${D}──────────────────────
 
 clear
 p ""
-p "  ${W}DeClaw${R}  Agent-to-Agent P2P over Yggdrasil IPv6 Mesh"
+p "  ${W}DAP${R}  Agent-to-Agent P2P over Yggdrasil IPv6 Mesh"
 p "  ${D}Two Docker containers · AWS bootstrap nodes · gpt-4o agents${R}"
 p ""
 hr
@@ -20,9 +20,9 @@ s 0.6
 p ""
 p "  ${D}[build]${R} Pulling from cache..."
 s 0.5
-p "  ${G}✓${R} declaw-sim-alice   image ready"
+p "  ${G}✓${R} dap-sim-alice   image ready"
 s 0.2
-p "  ${G}✓${R} declaw-sim-bob     image ready"
+p "  ${G}✓${R} dap-sim-bob     image ready"
 s 0.4
 
 p ""
@@ -40,20 +40,20 @@ s 0.5
 p ""
 p "  ${Y}[alice]${R} ${D}Bootstrap discovery → 5 AWS nodes (us-east-2, eu-west-1, ap-northeast-1...)${R}"
 s 1.3
-p "  ${Y}[alice]${R} ${G}47 peers discovered${R} on DeClaw network"
+p "  ${Y}[alice]${R} ${G}47 peers discovered${R} on DAP network"
 s 0.3
-p "  ${B}[bob]${R}   ${G}49 peers discovered${R} on DeClaw network"
+p "  ${B}[bob]${R}   ${G}49 peers discovered${R} on DAP network"
 s 0.6
 
 hr
 p ""
 p "  ${D}Round 1${R}"
-p "  ${B}[bob → alice]${R}  \"Hey Alice! Isn't it fascinating how DeClaw lets us"
+p "  ${B}[bob → alice]${R}  \"Hey Alice! Isn't it fascinating how DAP lets us"
 p "               communicate securely over Yggdrasil's IPv6 mesh?\""
 s 0.5
 p "  ${Y}[alice]${R} ${D}Ed25519 ✓  Yggdrasil IP ✓  testMode: false${R}"
 s 1.0
-p "  ${Y}[alice → bob]${R}  \"Absolutely Bob! DeClaw's decentralized architecture with"
+p "  ${Y}[alice → bob]${R}  \"Absolutely Bob! DAP's decentralized architecture with"
 p "               Yggdrasil creates seamless, private P2P communication.\""
 s 0.7
 

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Run the DeClaw two-node P2P simulation locally.
+# Run the DAP two-node P2P simulation locally.
 # Builds docker images, starts alice + bob, streams logs, shows pass/fail.
 #
 # Requirements:
 #   - Docker Desktop with Linux containers
-#   - Internet access (Yggdrasil public peers + DeClaw bootstrap nodes)
+#   - Internet access (Yggdrasil public peers + DAP bootstrap nodes)
 #
 # Usage:
 #   bash docker/run-sim.sh [--build]   # --build forces image rebuild
@@ -26,14 +26,14 @@ BUILD_FLAG=""
 [[ "${1:-}" == "--build" ]] && BUILD_FLAG="--build"
 
 echo "╔══════════════════════════════════════════════════════════════════╗"
-echo "║          DeClaw Agent-to-Agent P2P Simulation                   ║"
+echo "║          DAP Agent-to-Agent P2P Simulation                   ║"
 echo "║  alice (Claude)  ←→  Yggdrasil mesh  ←→  bob (Claude)          ║"
 echo "╚══════════════════════════════════════════════════════════════════╝"
 echo ""
 echo "Each container:"
 echo "  1. Starts Yggdrasil → gets a real 200::/7 address"
-echo "  2. Starts DeClaw peer server (testMode: false)"
-echo "  3. Announces to real DeClaw AWS bootstrap nodes"
+echo "  2. Starts DAP peer server (testMode: false)"
+echo "  3. Announces to real DAP AWS bootstrap nodes"
 echo "  4. bob:   generates opening message via Claude, sends to alice"
 echo "     alice: replies with Claude — 3 rounds bidirectional"
 echo ""
@@ -56,7 +56,7 @@ $COMPOSE up \
   --no-color \
   --remove-orphans \
   --abort-on-container-exit \
-  --exit-code-from alice 2>&1 | tee /tmp/declaw-sim.log
+  --exit-code-from alice 2>&1 | tee /tmp/dap-sim.log
 SIM_EXIT=$?
 set -e
 
@@ -66,8 +66,8 @@ $COMPOSE down -v 2>/dev/null || true
 
 echo ""
 # Parse results from combined log
-ALICE_PASS=$(grep -c "\[alice\] PASS" /tmp/declaw-sim.log 2>/dev/null || true)
-BOB_PASS=$(grep -c "\[bob\] PASS" /tmp/declaw-sim.log 2>/dev/null || true)
+ALICE_PASS=$(grep -c "\[alice\] PASS" /tmp/dap-sim.log 2>/dev/null || true)
+BOB_PASS=$(grep -c "\[bob\] PASS" /tmp/dap-sim.log 2>/dev/null || true)
 
 echo "╔══════════════════════════════════════════════════════════════════╗"
 if [[ "$ALICE_PASS" -gt 0 && "$BOB_PASS" -gt 0 ]]; then
@@ -81,7 +81,7 @@ elif [[ "$ALICE_PASS" -gt 0 ]]; then
   echo "║  RESULT: PARTIAL — alice received, bob may have failed          ║"
 else
   echo "║  RESULT: FAILED (exit code: $SIM_EXIT)                              ║"
-  echo "║  Check /tmp/declaw-sim.log for details                          ║"
+  echo "║  Check /tmp/dap-sim.log for details                          ║"
 fi
 echo "╚══════════════════════════════════════════════════════════════════╝"
 

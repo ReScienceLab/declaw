@@ -54,4 +54,4 @@ jobs:
           if [ -n "$PUBLISH_JS" ]; then
             sed -i '/tags,/a\            acceptLicenseTerms: true,' "$PUBLISH_JS"
           fi
-          npx clawhub@latest publish "$(pwd)/skills/declaw" --version "$VERSION"
+          npx clawhub@latest publish "$(pwd)/skills/dap" --version "$VERSION"

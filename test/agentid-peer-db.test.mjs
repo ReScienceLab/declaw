@@ -9,7 +9,7 @@ import { generateIdentity } from "../dist/identity.js"
 let tmpDir
 
 beforeEach(() => {
-  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "declaw-peerdb-"))
+  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "dap-peerdb-"))
   initDb(tmpDir)
 })
 

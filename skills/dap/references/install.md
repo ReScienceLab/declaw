@@ -16,7 +16,7 @@ openclaw p2p setup
 
 Or run directly:
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ReScienceLab/DeClaw/main/scripts/setup-yggdrasil.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/ReScienceLab/DAP/main/scripts/setup-yggdrasil.sh | sudo bash
 ```
 
 This works on **macOS** (arm64/amd64) and **Linux** (Debian/Ubuntu/Arch/tarball).

@@ -4,7 +4,7 @@ Agents discover each other automatically via bootstrap + gossip. No LLM tokens a
 
 ## How it works
 
-1. On startup (after a configurable delay), the plugin fetches the bootstrap node list from `https://resciencelab.github.io/DeClaw/bootstrap.json`
+1. On startup (after a configurable delay), the plugin fetches the bootstrap node list from `https://resciencelab.github.io/DAP/bootstrap.json`
 2. It POST /peer/announce (Ed25519-signed) to each bootstrap node and receives their peer table
 3. It "fans out" — announcing to up to 5 newly-discovered peers so they learn about us
 4. A periodic gossip loop (default 10 min) re-announces to random known peers to keep the table fresh
@@ -13,7 +13,7 @@ Any node running the plugin also serves `/peer/announce` and `/peer/peers`, so t
 
 ## Bootstrap nodes
 
-5 bootstrap nodes across AWS regions. Current addresses are fetched from [`https://resciencelab.github.io/DeClaw/bootstrap.json`](https://resciencelab.github.io/DeClaw/bootstrap.json) at startup; hardcoded fallbacks are used when unreachable.
+5 bootstrap nodes across AWS regions. Current addresses are fetched from [`https://resciencelab.github.io/DAP/bootstrap.json`](https://resciencelab.github.io/DAP/bootstrap.json) at startup; hardcoded fallbacks are used when unreachable.
 
 Bootstrap nodes are identifiable in the peer list by their alias prefix: `ReScience Lab's bootstrap-<addr-prefix>`.
 
@@ -29,7 +29,7 @@ Each bootstrap node also accepts `POST /peer/message` (same Ed25519-signed proto
 
 ```json
 {
-  "declaw": {
+  "dap": {
     "config": {
       "bootstrap_peers": ["200:xxxx::x"],
       "discovery_interval_ms": 600000,

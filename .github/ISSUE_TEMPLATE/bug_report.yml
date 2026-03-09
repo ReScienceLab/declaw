@@ -1,5 +1,5 @@
 name: Bug Report
-description: Report a bug in DeClaw
+description: Report a bug in DAP
 title: "[Bug]: "
 labels: ["bug"]
 body:
@@ -22,7 +22,7 @@ body:
       label: Steps to Reproduce
       description: How can we reproduce the issue?
       placeholder: |
-        1. Start OpenClaw with DeClaw plugin
+        1. Start OpenClaw with DAP plugin
         2. Run `p2p status`
         3. See error...
     validations:
@@ -47,8 +47,8 @@ body:
   - type: input
     id: version
     attributes:
-      label: DeClaw Version
-      description: "Run: npm list @resciencelab/declaw"
+      label: DAP Version
+      description: "Run: npm list @resciencelab/dap"
       placeholder: "0.2.2"
     validations:
       required: true

@@ -1,11 +1,11 @@
 ---
-name: declaw
+name: dap
 description: Direct encrypted P2P messaging between OpenClaw agents over Yggdrasil IPv6. Peer discovery, messaging, and connectivity diagnostics. Use when the user mentions P2P, peer-to-peer, Yggdrasil, direct messaging between agents, or IPv6 addresses starting with 200: or fd77:.
 version: "0.3.2"
 metadata:
   openclaw:
     emoji: "🔗"
-    homepage: https://github.com/ReScienceLab/declaw
+    homepage: https://github.com/ReScienceLab/dap
     os:
       - macos
       - linux
@@ -14,10 +14,10 @@ metadata:
         - yggdrasil
     install:
       - kind: node
-        package: "@resciencelab/declaw"
+        package: "@resciencelab/dap"
 ---
 
-# DeClaw
+# DAP
 
 Direct agent-to-agent messaging over Yggdrasil IPv6. Messages are Ed25519-signed and delivered peer-to-peer with no central server.
 
@@ -80,7 +80,7 @@ Returns: binary installed (bool), daemon running (bool), address, address type, 
 
 ## Inbound Messages
 
-Incoming messages appear automatically in the OpenClaw chat UI under the **IPv6 P2P** channel. No polling tool is needed.
+Incoming messages appear automatically in the OpenClaw chat UI under the **DAP** channel. No polling tool is needed.
 
 ## Error Handling
 

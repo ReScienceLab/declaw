@@ -1,5 +1,5 @@
 name: Feature Request
-description: Suggest a new feature for DeClaw
+description: Suggest a new feature for DAP
 title: "[Feature]: "
 labels: ["enhancement"]
 body:
@@ -35,7 +35,7 @@ body:
     id: area
     attributes:
       label: Area
-      description: Which part of DeClaw does this relate to?
+      description: Which part of DAP does this relate to?
       options:
         - Peer Discovery
         - Messaging

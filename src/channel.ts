@@ -1,5 +1,5 @@
 /**
- * OpenClaw channel registration for DeClaw P2P messaging.
+ * OpenClaw channel registration for DAP P2P messaging.
  * Account IDs are agentIds.
  */
 import { Identity } from "./types"
@@ -40,14 +40,14 @@ export const CHANNEL_CONFIG_SCHEMA = {
 
 export function buildChannel(identity: Identity, port: number, getSendOpts?: (id: string) => SendOptions) {
   return {
-    id: "declaw",
+    id: "dap",
     meta: {
-      id: "declaw",
-      label: "DeClaw",
-      selectionLabel: "DeClaw (P2P)",
-      docsPath: "/channels/declaw",
+      id: "dap",
+      label: "DAP",
+      selectionLabel: "DAP (P2P)",
+      docsPath: "/channels/dap",
       blurb: "Direct encrypted P2P messaging. No servers, no middlemen.",
-      aliases: ["p2p", "ygg", "yggdrasil", "ipv6-p2p"],
+      aliases: ["p2p", "ygg", "yggdrasil"],
     },
     capabilities: { chatTypes: ["direct"] },
     configSchema: CHANNEL_CONFIG_SCHEMA,
@@ -72,7 +72,7 @@ export function buildChannel(identity: Identity, port: number, getSendOpts?: (id
         const opts = getSendOpts?.(agentId)
         const result = await sendP2PMessage(identity, targetAddr, "chat", text, port, 10_000, opts)
         if (!result.ok) {
-          console.error(`[declaw] Failed to send to ${agentId}: ${result.error}`)
+          console.error(`[dap] Failed to send to ${agentId}: ${result.error}`)
         }
         return { ok: result.ok }
       },
@@ -85,13 +85,13 @@ export function wireInboundToGateway(api: any): void {
     if (msg.event !== "chat") return
     try {
       api.gateway?.receiveChannelMessage?.({
-        channelId: "declaw",
+        channelId: "dap",
         accountId: msg.from,
         text: msg.content,
         senderId: msg.from,
       })
     } catch {
-      console.log(`[declaw] Message from ${msg.from}: ${msg.content}`)
+      console.log(`[dap] Message from ${msg.from}: ${msg.content}`)
     }
   })
 }

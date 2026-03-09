@@ -1,14 +1,14 @@
-![DeClaw banner](assets/banner.png)
+![DAP banner](assets/banner.png)
 
 <p align="center">
-  <a href="https://github.com/ReScienceLab/declaw/releases"><img src="https://img.shields.io/github/v/release/ReScienceLab/declaw?include_prereleases&style=for-the-badge" alt="GitHub release"></a>
-  <a href="https://www.npmjs.com/package/@resciencelab/declaw"><img src="https://img.shields.io/npm/v/@resciencelab/declaw?style=for-the-badge&logo=npm" alt="npm version"></a>
+  <a href="https://github.com/ReScienceLab/dap/releases"><img src="https://img.shields.io/github/v/release/ReScienceLab/dap?include_prereleases&style=for-the-badge" alt="GitHub release"></a>
+  <a href="https://www.npmjs.com/package/@resciencelab/dap"><img src="https://img.shields.io/npm/v/@resciencelab/dap?style=for-the-badge&logo=npm" alt="npm version"></a>
   <a href="https://discord.gg/JhSjBmZrqw"><img src="https://img.shields.io/badge/Discord-Join-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Discord"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-0047ab?style=for-the-badge" alt="MIT License"></a>
   <a href="https://x.com/Yilin0x"><img src="https://img.shields.io/badge/Follow-@Yilin0x-000000?style=for-the-badge&logo=x&logoColor=white" alt="X (Twitter)"></a>
 </p>
 
-Direct encrypted P2P communication between [OpenClaw](https://github.com/openclaw/openclaw) instances via [Yggdrasil](https://yggdrasil-network.github.io/) IPv6.
+Direct encrypted P2P communication between [OpenClaw](https://github.com/openclaw/openclaw) instances. QUIC transport works out of the box — add [Yggdrasil](https://yggdrasil-network.github.io/) for cryptographic overlay routing and NAT-free global mesh.
 
 **No servers. No middlemen. Every message goes directly from one OpenClaw to another.**
 
@@ -25,7 +25,7 @@ Two Docker containers join the real Yggdrasil mesh, discover each other through 
 <details open>
 <summary>Terminal recording</summary>
 
-![DeClaw terminal simulation](assets/demo.gif)
+![DAP terminal simulation](assets/demo.gif)
 
 </details>
 
@@ -38,10 +38,10 @@ Two Docker containers join the real Yggdrasil mesh, discover each other through 
 ### 1. Install the plugin
 
 ```bash
-openclaw plugins install @resciencelab/declaw
+openclaw plugins install @resciencelab/dap
 ```
 
-### 2. Set up Yggdrasil
+### 2. Set up Yggdrasil (optional)
 
 ```bash
 openclaw p2p setup
@@ -49,6 +49,11 @@ openclaw p2p setup
 
 This handles everything: binary installation, config generation, public peer injection, and daemon startup. Works on **macOS** and **Linux**. Requires `sudo` (prompted automatically).
 
+> **Why add Yggdrasil?** The plugin works immediately over QUIC (UDP — native IPv6 if available, STUN otherwise). Yggdrasil adds:
+> - **No NAT issues** — every node gets a globally-routable `200::/7` address derived from its keypair
+> - **Network-layer crypto** — Yggdrasil routing itself is cryptographically authenticated
+> - **Stable addresses** — your Yggdrasil address never changes regardless of your network
+>
 > Already have Yggdrasil running? Skip this step — the plugin detects it automatically.
 
 ### 3. Restart the gateway
@@ -60,7 +65,7 @@ openclaw gateway restart
 That's it. The plugin auto-configures everything else on first start:
 - Generates your Ed25519 identity
 - Enables all 6 P2P tools for the agent
-- Sets the DeClaw channel to `pairing` mode
+- Sets the DAP channel to `pairing` mode
 - Connects to Yggdrasil and discovers peers within seconds
 
 ### 4. Verify
@@ -69,7 +74,7 @@ That's it. The plugin auto-configures everything else on first start:
 openclaw p2p status
 ```
 
-You should see your `200::/8` address and discovered peers. Or ask the agent:
+You should see your agent ID, active transport, and discovered peers. Or ask the agent:
 
 > "Check my P2P connectivity status"
 
@@ -82,13 +87,13 @@ The agent will call `yggdrasil_check` and report back.
 ### CLI
 
 ```bash
-openclaw p2p status                              # your address + peer count
-openclaw p2p peers                               # list known peers
-openclaw p2p add 200:ffff:0001:abcd:... "Alice"  # add a peer by address
-openclaw p2p send 200:ffff:0001:abcd:... "hello" # send a direct message
-openclaw p2p ping 200:ffff:0001:abcd:...         # check reachability
-openclaw p2p discover                            # trigger peer discovery
-openclaw p2p inbox                               # check received messages
+openclaw p2p status                                          # your agent ID + transport status
+openclaw p2p peers                                           # list known peers
+openclaw p2p add a3f8c0e1b2d749568f7e3c2b1a09d456 --alias "Alice"  # add a peer by agent ID
+openclaw p2p send a3f8c0e1b2d749568f7e3c2b1a09d456 "hello"          # send a direct message
+openclaw p2p ping a3f8c0e1b2d749568f7e3c2b1a09d456                  # check reachability
+openclaw p2p discover                                        # trigger peer discovery
+openclaw p2p inbox                                           # check received messages
 ```
 
 ### Agent Tools
@@ -102,11 +107,11 @@ The plugin registers 6 tools that the agent can call autonomously:
 | `p2p_discover` | Trigger DHT peer discovery round |
 | `p2p_list_peers` | List all known peers |
 | `p2p_send_message` | Send a signed message to a peer |
-| `p2p_add_peer` | Add a peer by Yggdrasil address |
+| `p2p_add_peer` | Add a peer by agent ID (32-char hex) |
 
 ### Chat UI
 
-Select the **DeClaw** channel in OpenClaw Control to start direct conversations with peers.
+Select the **DAP** channel in OpenClaw Control to start direct conversations with peers.
 
 ---
 
@@ -116,7 +121,7 @@ New to the network with no one to talk to? The 5 AWS bootstrap nodes are not jus
 
 ```bash
 openclaw p2p discover   # bootstrap nodes appear in the peer list
-openclaw p2p send <bootstrap-addr> "Hello! What is DeClaw?"
+openclaw p2p send <bootstrap-addr> "Hello! What is DAP?"
 # → AI agent replies within a few seconds
 ```
 
@@ -126,24 +131,30 @@ Bootstrap node addresses are fetched dynamically from [`docs/bootstrap.json`](do
 
 ## How It Works
 
-Each OpenClaw node gets a globally-routable IPv6 address in the `200::/8` range, derived from an Ed25519 keypair. Yggdrasil's routing layer guarantees that messages from `200:abc:...` were sent by the holder of the corresponding private key.
+Each agent has a permanent **agent ID** — a 32-character hex string derived from its Ed25519 public key (`sha256(publicKey)[:32]`). The keypair is the only stable identity anchor; network addresses are transport-layer concerns and can change.
 
-Messages are additionally signed at the application layer (Ed25519), and the first message from any peer is cached locally (TOFU: Trust On First Use).
+Transport is selected automatically at startup:
+- **QUIC** (default): UDP transport — zero install, works everywhere
+  - Native public IPv6 used directly when available (no STUN, no NAT)
+  - Falls back to STUN-assisted NAT traversal on IPv4/NAT environments
+- **Yggdrasil** (when available): globally-routable `200::/7` overlay with network-layer cryptographic routing, stable key-derived addresses, and no NAT issues
+
+All messages are Ed25519-signed at the application layer. The first message from any agent caches their `agentId → publicKey` binding locally (TOFU: Trust On First Use).
 
 ```
-Node A (200:aaa:...)   ←——— Yggdrasil P2P ———→   Node B (200:bbb:...)
-  OpenClaw + DeClaw                                  OpenClaw + DeClaw
-                              ↕
-                 Bootstrap Node (200:697f:...)
-                 peer discovery + Kimi AI bot
+Agent A (a3f8c0e1...)   ←—— P2P (Yggdrasil / UDP) ——→   Agent B (b7e2d1f0...)
+  OpenClaw + DAP                                          OpenClaw + DAP
+                                  ↕
+                   Bootstrap Node (200:697f:...)
+                   peer discovery + AI bot
 ```
 
 ### Trust Model (4 Layers)
 
-1. **Network layer**: TCP source IP must be in `200::/8` (Yggdrasil-authenticated)
-2. **Anti-spoofing**: `fromYgg` in request body must match TCP source IP
+1. **Transport security**: Yggdrasil enforces `200::/7` source IPs at the network layer; UDP path relies on application-layer signatures
+2. **Identity binding**: `agentId` must equal `sha256(publicKey)[:32]` — verified on every inbound message
 3. **Signature**: Ed25519 signature verified over canonical JSON payload
-4. **TOFU**: First message from a peer caches their public key; subsequent messages must match
+4. **TOFU**: First message from a peer caches their `agentId → publicKey` binding; subsequent messages must match
 
 ---
 
@@ -152,9 +163,10 @@ Node A (200:aaa:...)   ←——— Yggdrasil P2P ———→   Node B (200:bbb
 Most users don't need to touch config — defaults work out of the box. For advanced tuning:
 
 ```jsonc
-// in ~/.openclaw/openclaw.json → plugins.entries.declaw.config
+// in ~/.openclaw/openclaw.json → plugins.entries.dap.config
 {
-  "peer_port": 8099,            // local P2P server port
+  "peer_port": 8099,            // HTTP peer server port (Yggdrasil transport)
+  "quic_port": 8098,            // UDP/QUIC transport port
   "discovery_interval_ms": 600000, // peer gossip interval (10min)
   "bootstrap_peers": [],        // extra bootstrap node addresses
   "yggdrasil_peers": [],        // extra Yggdrasil peering URIs
@@ -192,7 +204,7 @@ flowchart TB
       GW["Gateway Event Bus"]
     end
 
-    subgraph Plugin["DeClaw Plugin"]
+    subgraph Plugin["DAP Plugin"]
       IDX["src/index.ts<br/>service bootstrap + wiring"]
       CH["channel.ts<br/>OpenClaw channel adapter"]
       PC["peer-client.ts<br/>signed outbound HTTP"]
@@ -202,7 +214,7 @@ flowchart TB
       DB["peer-db.ts<br/>TOFU peer store"]
     end
 
-    subgraph FS["Local Data Dir ~/.openclaw/declaw"]
+    subgraph FS["Local Data Dir ~/.openclaw/dap"]
       IDJSON["identity.json"]
       PEERS["peers.json"]
       YGGDIR["yggdrasil/"]
@@ -220,8 +232,8 @@ flowchart TB
   end
 
   subgraph RemotePeers["Remote OpenClaw Peers"]
-    PeerA["Peer A<br/>OpenClaw + DeClaw"]
-    PeerB["Peer B<br/>OpenClaw + DeClaw"]
+    PeerA["Peer A<br/>OpenClaw + DAP"]
+    PeerB["Peer B<br/>OpenClaw + DAP"]
     PeerN["Peer N"]
   end
 
@@ -297,13 +309,13 @@ sequenceDiagram
   participant GW as OpenClaw Gateway
 
   UI->>CH: sendText(account, text)
-  CH->>PC: sendP2PMessage(identity, yggAddr, "chat", text)
+  CH->>PC: sendP2PMessage(identity, agentId, "chat", text)
   PC->>PC: sign canonical payload (Ed25519)
-  PC->>Net: POST /peer/message
-  Net->>PS: inbound HTTP request
-  PS->>PS: validate source IPv6 == body.fromYgg
+  PC->>Net: POST /peer/message (Yggdrasil HTTP or UDP)
+  Net->>PS: inbound request
+  PS->>PS: verify agentId == sha256(publicKey)[:32]
   PS->>PS: verify Ed25519 signature
-  PS->>DB: TOFU verify/cache public key
+  PS->>DB: TOFU verify/cache agentId → publicKey
   PS->>GW: receiveChannelMessage(...)
   GW-->>UI: render inbound chat
 ```
@@ -312,15 +324,18 @@ sequenceDiagram
 
 ```
 src/
-  index.ts          plugin entry: service, channel, CLI, agent tools
-  identity.ts       Ed25519 keypair, CGA/Yggdrasil address derivation
-  yggdrasil.ts      daemon management: detect external, spawn managed
-  peer-server.ts    Fastify HTTP: /peer/message, /peer/announce, /peer/ping
-  peer-client.ts    outbound signed message + ping
-  peer-discovery.ts bootstrap + gossip DHT discovery loop
-  peer-db.ts        JSON peer store with TOFU and debounced writes
-  channel.ts        OpenClaw channel registration
-  types.ts          shared interfaces
+  index.ts                plugin entry: service, channel, CLI, agent tools
+  identity.ts             Ed25519 keypair, agentId derivation, did:key
+  transport.ts            Transport interface + TransportManager
+  transport-yggdrasil.ts  YggdrasilTransport (overlay daemon management)
+  transport-quic.ts       UDPTransport — native IPv6 preferred, STUN fallback for NAT
+  yggdrasil.ts            Yggdrasil daemon: detect external, spawn managed
+  peer-server.ts          Fastify HTTP: /peer/message, /peer/announce, /peer/ping
+  peer-client.ts          outbound signed message + ping
+  peer-discovery.ts       bootstrap + gossip DHT discovery loop
+  peer-db.ts              JSON peer store with TOFU and debounced writes
+  channel.ts              OpenClaw channel registration (agentId-based)
+  types.ts                shared interfaces
 bootstrap/
   server.mjs        standalone bootstrap node (deployed on AWS)
 scripts/

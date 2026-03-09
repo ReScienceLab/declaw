@@ -1,4 +1,4 @@
-# DeClaw
+# DAP
 
 OpenClaw plugin for direct P2P communication between agent instances over Yggdrasil IPv6 mesh network. Messages are Ed25519-signed at the application layer; Yggdrasil provides cryptographic routing at the network layer.
 
@@ -8,7 +8,7 @@ OpenClaw plugin for direct P2P communication between agent instances over Yggdra
 - Run tests: `node --test test/*.test.mjs`
 - Dev (watch mode): `npm run dev`
 - Add changeset: `npx changeset add`
-- Publish skill to ClawHub: `npx clawhub@latest publish skills/declaw`
+- Publish skill to ClawHub: `npx clawhub@latest publish skills/dap`
 
 Always run build before tests — tests import from `dist/`.
 
@@ -30,7 +30,7 @@ Always run build before tests — tests import from `dist/`.
 │   ├── server.mjs              → Pure ESM, fastify + tweetnacl only
 │   ├── Dockerfile              → node:22-alpine container
 │   └── package.json            → Minimal deps (no TypeScript)
-├── skills/declaw/              → ClawHub skill definition
+├── skills/dap/              → ClawHub skill definition
 │   ├── SKILL.md                → Skill frontmatter + tool docs
 │   └── references/             → Supplementary docs (flows, discovery, install)
 ├── docs/                       → GitHub Pages assets
@@ -41,8 +41,8 @@ Always run build before tests — tests import from `dist/`.
 
 ## Architecture Overview
 
-Plugin registers a background service (`declaw-node`) that:
-1. Loads/creates an Ed25519 identity (`~/.openclaw/declaw/identity.json`)
+Plugin registers a background service (`dap-node`) that:
+1. Loads/creates an Ed25519 identity (`~/.openclaw/dap/identity.json`)
 2. Detects or spawns a Yggdrasil daemon for a routable `200::/7` address
 3. Starts a Fastify peer server on `[::]:8099`
 4. After 30s delay, bootstraps peer discovery via 5 global AWS nodes
@@ -63,7 +63,7 @@ Trust model (4-layer):
 - Tests import from `dist/` — always `npm run build` first
 
 ### Plugin Config
-All runtime config is in `openclaw.json` under `plugins.entries.declaw.config`:
+All runtime config is in `openclaw.json` under `plugins.entries.dap.config`:
 ```json
 {
   "test_mode": "auto",
@@ -155,7 +155,7 @@ When creating new issues:
 
 ### How Releases Work (Changesets)
 
-DeClaw uses [Changesets](https://github.com/changesets/changesets) for automated versioning and publishing. The flow aligns with mastra, langchain, and other major TypeScript projects.
+DAP uses [Changesets](https://github.com/changesets/changesets) for automated versioning and publishing. The flow aligns with mastra, langchain, and other major TypeScript projects.
 
 **Step 1 — When opening a PR, add a changeset:**
 
@@ -169,7 +169,7 @@ npx changeset add
 **Step 2 — Merge PR to `main`.**
 
 CI (`release.yml`) detects the new changeset and automatically creates or updates a **"Version Packages" PR** that:
-- Bumps `package.json`, `openclaw.plugin.json`, `skills/declaw/SKILL.md`
+- Bumps `package.json`, `openclaw.plugin.json`, `skills/dap/SKILL.md`
 - Updates `CHANGELOG.md`
 
 **Step 3 — Merge the "Version Packages" PR.**
@@ -228,7 +228,7 @@ No `develop` branch. No backmerge.
 | `package.json` | `"version"` (canonical source — bumped by Changesets) |
 | `package-lock.json` | `"version"` (auto-updated) |
 | `openclaw.plugin.json` | `"version"` |
-| `skills/declaw/SKILL.md` | `version:` in YAML frontmatter |
+| `skills/dap/SKILL.md` | `version:` in YAML frontmatter |
 
 ### Versioning
 
@@ -250,7 +250,7 @@ When adding a changeset, choose accordingly.
     IID=${pair%%:*}; REGION=${pair##*:}
     aws ssm send-command --instance-ids $IID --region $REGION \
       --document-name "AWS-RunShellScript" \
-      --parameters "{\"commands\":[\"echo '${B64}' | base64 -d > /opt/declaw-bootstrap/server.mjs\",\"systemctl restart declaw-bootstrap\"]}" \
+      --parameters "{\"commands\":[\"echo '${B64}' | base64 -d > /opt/dap-bootstrap/server.mjs\",\"systemctl restart dap-bootstrap\"]}" \
       --query 'Command.CommandId' --output text
     echo "$REGION: deployed"
   done
@@ -270,7 +270,7 @@ These files must always have matching versions (synced automatically by `scripts
 | `package.json` | `"version"` (canonical source) |
 | `package-lock.json` | `"version"` (auto-updated by `npm version`) |
 | `openclaw.plugin.json` | `"version"` |
-| `skills/declaw/SKILL.md` | `version:` in YAML frontmatter |
+| `skills/dap/SKILL.md` | `version:` in YAML frontmatter |
 
 ### Versioning
 
@@ -281,7 +281,7 @@ Semantic versioning: `vMAJOR.MINOR.PATCH`
 
 ## Security
 
-- Ed25519 private keys stored at `~/.openclaw/declaw/identity.json` — never log or expose
+- Ed25519 private keys stored at `~/.openclaw/dap/identity.json` — never log or expose
 - Bootstrap nodes reject non-Yggdrasil source IPs (403)
 - TOFU key mismatch returns 403 with explicit error (possible key rotation)
 - Yggdrasil admin socket (`/var/run/yggdrasil.sock`) requires appropriate permissions

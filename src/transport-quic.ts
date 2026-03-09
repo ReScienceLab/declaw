@@ -15,7 +15,7 @@ import * as dgram from "node:dgram"
 import * as net from "node:net"
 import { Transport, TransportId, TransportEndpoint } from "./transport"
 import { Identity } from "./types"
-import { getActualIpv6 } from "./identity"
+import { getActualIpv6, getPublicIPv6 } from "./identity"
 
 /** Well-known public STUN servers for NAT traversal. */
 const STUN_SERVERS = [
@@ -182,10 +182,21 @@ export class UDPTransport implements Transport {
         }
       })
 
-      // Try STUN discovery for public endpoint (skip in test mode).
+      // Check for native public IPv6 first — globally routable, no STUN needed.
+      // When universal IPv6 is available this becomes the primary path.
+      if (!testMode) {
+        const publicIpv6 = getPublicIPv6()
+        if (publicIpv6) {
+          this._address = `[${publicIpv6}]:${actualPort}`
+          this._publicEndpoint = { address: publicIpv6, port: actualPort }
+          console.log(`[transport:quic] Native public IPv6: ${this._address} (STUN skipped)`)
+        }
+      }
+
+      // Try STUN discovery for IPv4 public endpoint only if no public IPv6 found.
       // We also create a companion IPv4 UDP socket on the same port so the
       // STUN-mapped port matches the port we are actually listening on.
-      if (!testMode) {
+      if (!testMode && !this._address) {
         let stunSocket: dgram.Socket | null = null
         try {
           stunSocket = dgram.createSocket("udp4")
@@ -279,7 +290,7 @@ export class UDPTransport implements Transport {
       transport: "quic",
       address: this._address,
       port: this._port,
-      priority: 10,
+      priority: 0,
       ttl: 3600,
     }
   }

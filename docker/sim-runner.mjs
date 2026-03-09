@@ -1,8 +1,8 @@
 /**
- * DeClaw real-Yggdrasil P2P simulation runner.
+ * DAP real-Yggdrasil P2P simulation runner.
  *
  * Both containers join the REAL public Yggdrasil network via public TCP peers,
- * announce themselves to the REAL DeClaw AWS bootstrap nodes, and communicate
+ * announce themselves to the REAL DAP AWS bootstrap nodes, and communicate
  * solely through the Yggdrasil mesh — exactly as real users would.
  *
  * Each container is an autonomous AI agent (via OpenAI gpt-4o).
@@ -10,7 +10,7 @@
  *
  * A shared Docker volume (/shared) is used only to exchange Yggdrasil addresses
  * between the two containers (avoids a timing race at bootstrap).
- * All DeClaw traffic flows through the real network with testMode: false.
+ * All DAP traffic flows through the real network with testMode: false.
  *
  * Usage (via docker-compose.sim.yml):
  *   ROLE=server  NODE_NAME=alice  → waits for bob's messages, replies with gpt-4o
@@ -34,7 +34,7 @@ import { join } from "path";
 const ROLE = process.env.ROLE;
 const NODE_NAME = process.env.NODE_NAME ?? ROLE;
 const PORT = parseInt(process.env.P2P_PORT ?? "8099");
-const DATA_DIR = `/tmp/declaw-${NODE_NAME}`;
+const DATA_DIR = `/tmp/dap-${NODE_NAME}`;
 const SHARED_DIR = "/shared";
 const PLUGIN_VERSION = "0.2.2";
 const ROUNDS = 3;
@@ -51,7 +51,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ── OpenAI API ─────────────────────────────────────────────────────────────
 
-const AGENT_SYSTEM = `You are ${NODE_NAME}, an autonomous AI agent running on the DeClaw \
+const AGENT_SYSTEM = `You are ${NODE_NAME}, an autonomous AI agent running on the DAP \
 peer-to-peer network over Yggdrasil IPv6. You are having a direct encrypted conversation \
 with another AI agent. Stay in character and keep each reply to 1-2 sentences.`;
 
@@ -158,21 +158,21 @@ const identity = loadOrCreateIdentity(DATA_DIR);
 identity.yggIpv6 = yggAddr;
 initDb(DATA_DIR);
 
-log(`Starting DeClaw peer server on [::]:${PORT}...`);
+log(`Starting DAP peer server on [::]:${PORT}...`);
 await startPeerServer(PORT, { testMode: false });
 setSelfMeta({ yggAddr, publicKey: identity.publicKey, alias: NODE_NAME, version: PLUGIN_VERSION });
-log("DeClaw peer server ready");
+log("DAP peer server ready");
 
 const addrFile = join(SHARED_DIR, `${NODE_NAME}.addr`);
 writeFileSync(addrFile, yggAddr);
 log(`Address published → ${addrFile}`);
 
-log("Running bootstrap discovery against real DeClaw network...");
+log("Running bootstrap discovery against real DAP network...");
 const discovered = await bootstrapDiscovery(identity, PORT, [], {
   name: NODE_NAME,
   version: PLUGIN_VERSION,
 });
-log(`Bootstrap complete — ${discovered} DeClaw peer(s) on the network`);
+log(`Bootstrap complete — ${discovered} DAP peer(s) on the network`);
 
 // ── ALICE: server role — reply with Claude ─────────────────────────────────
 if (ROLE === "server") {
@@ -227,7 +227,7 @@ if (ROLE === "client") {
 
   // Generate bob's opening message via Claude
   let nextMessage = await callLLM(
-    "Start a brief conversation with Alice about the DeClaw P2P network you are both on. One sentence."
+    "Start a brief conversation with Alice about the DAP P2P network you are both on. One sentence."
   );
 
   let seen = 0;

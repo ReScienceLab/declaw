@@ -1,6 +1,6 @@
-# Contributing to DeClaw
+# Contributing to DAP
 
-Thanks for your interest in contributing! DeClaw is an OpenClaw plugin for direct P2P communication between AI agent instances over Yggdrasil IPv6 mesh network.
+Thanks for your interest in contributing! DAP is an OpenClaw plugin for direct P2P communication between AI agent instances over Yggdrasil IPv6 mesh network.
 
 ## Getting Started
 
@@ -14,8 +14,8 @@ Thanks for your interest in contributing! DeClaw is an OpenClaw plugin for direc
 ### Setup
 
 ```bash
-git clone https://github.com/ReScienceLab/DeClaw.git
-cd DeClaw
+git clone https://github.com/ReScienceLab/DAP.git
+cd DAP
 npm install
 npm run build
 node --test test/*.test.mjs
@@ -35,7 +35,7 @@ node --test test/*.test.mjs   # run all tests
 
 ### Reporting Bugs
 
-- Search [existing issues](https://github.com/ReScienceLab/DeClaw/issues) first
+- Search [existing issues](https://github.com/ReScienceLab/DAP/issues) first
 - Use the **Bug Report** issue template
 - Include: steps to reproduce, expected vs actual behavior, OS/Node version, Yggdrasil version
 
@@ -46,7 +46,7 @@ node --test test/*.test.mjs   # run all tests
 
 ### Good First Issues
 
-Look for issues labeled [`good first issue`](https://github.com/ReScienceLab/DeClaw/labels/good%20first%20issue) — these are scoped, well-described tasks ideal for newcomers.
+Look for issues labeled [`good first issue`](https://github.com/ReScienceLab/DAP/labels/good%20first%20issue) — these are scoped, well-described tasks ideal for newcomers.
 
 ### Submitting Code
 
@@ -114,7 +114,7 @@ Trust model (4-layer): TCP source IP → `fromYgg` anti-spoofing → Ed25519 sig
 
 ## Questions?
 
-Use [GitHub Discussions](https://github.com/ReScienceLab/DeClaw/discussions) for questions, ideas, and general discussion. Issues are for bugs and feature requests.
+Use [GitHub Discussions](https://github.com/ReScienceLab/DAP/discussions) for questions, ideas, and general discussion. Issues are for bugs and feature requests.
 
 ## License
 

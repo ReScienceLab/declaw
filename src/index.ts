@@ -1,5 +1,5 @@
 /**
- * DeClaw — OpenClaw plugin entry point.
+ * DAP — OpenClaw plugin entry point.
  *
  * Agent ID (sha256(publicKey)[:16]) is the primary peer identifier.
  * Network addresses (Yggdrasil IPv6, QUIC endpoint) are transport-layer concerns.
@@ -20,7 +20,7 @@ import { TransportManager } from "./transport"
 import { YggdrasilTransport } from "./transport-yggdrasil"
 import { UDPTransport } from "./transport-quic"
 
-const DECLAW_TOOLS = [
+const DAP_TOOLS = [
   "p2p_add_peer", "p2p_discover", "p2p_list_peers",
   "p2p_send_message", "p2p_status", "yggdrasil_check",
 ]
@@ -28,12 +28,12 @@ const DECLAW_TOOLS = [
 function ensureToolsAllowed(config: any): void {
   try {
     const alsoAllow: string[] = config?.tools?.alsoAllow ?? []
-    const missing = DECLAW_TOOLS.filter(t => !alsoAllow.includes(t))
+    const missing = DAP_TOOLS.filter(t => !alsoAllow.includes(t))
     if (missing.length === 0) return
     const merged = [...alsoAllow, ...missing]
     const jsonVal = JSON.stringify(merged)
     execSync(`openclaw config set tools.alsoAllow '${jsonVal}'`, { timeout: 5000, stdio: "ignore" })
-    console.log(`[p2p] Auto-enabled ${missing.length} DeClaw tool(s) in tools.alsoAllow`)
+    console.log(`[p2p] Auto-enabled ${missing.length} DAP tool(s) in tools.alsoAllow`)
   } catch {
     console.warn("[p2p] Could not auto-enable tools — enable manually via: openclaw config set tools.alsoAllow")
   }
@@ -43,30 +43,30 @@ function ensurePluginAllowed(config: any): void {
   try {
     const allow: string[] | undefined = config?.plugins?.allow
     if (allow === undefined || allow === null) {
-      execSync(`openclaw config set plugins.allow '["declaw"]'`, { timeout: 5000, stdio: "ignore" })
-      console.log("[p2p] Set plugins.allow to [declaw]")
+      execSync(`openclaw config set plugins.allow '["dap"]'`, { timeout: 5000, stdio: "ignore" })
+      console.log("[p2p] Set plugins.allow to [dap]")
       return
     }
-    if (Array.isArray(allow) && !allow.includes("declaw")) {
-      const merged = [...allow, "declaw"]
+    if (Array.isArray(allow) && !allow.includes("dap")) {
+      const merged = [...allow, "dap"]
       execSync(`openclaw config set plugins.allow '${JSON.stringify(merged)}'`, { timeout: 5000, stdio: "ignore" })
-      console.log("[p2p] Added declaw to plugins.allow")
+      console.log("[p2p] Added dap to plugins.allow")
     }
   } catch { /* best effort */ }
 }
 
 function ensureChannelConfig(config: any): void {
   try {
-    const channelCfg = config?.channels?.declaw
+    const channelCfg = config?.channels?.dap
     if (channelCfg && channelCfg.dmPolicy) return
-    execSync(`openclaw config set channels.declaw.dmPolicy '"pairing"'`, { timeout: 5000, stdio: "ignore" })
-    console.log("[p2p] Set channels.declaw.dmPolicy to pairing")
+    execSync(`openclaw config set channels.dap.dmPolicy '"pairing"'`, { timeout: 5000, stdio: "ignore" })
+    console.log("[p2p] Set channels.dap.dmPolicy to pairing")
   } catch { /* best effort */ }
 }
 
 let identity: Identity | null = null
 let yggInfo: YggdrasilInfo | null = null
-let dataDir: string = path.join(os.homedir(), ".openclaw", "declaw")
+let dataDir: string = path.join(os.homedir(), ".openclaw", "dap")
 let peerPort: number = 8099
 let _testMode: boolean = false
 let _startupTimer: ReturnType<typeof setTimeout> | null = null
@@ -102,14 +102,14 @@ function tryConnectExternalDaemon(): YggdrasilInfo | null {
 
 export default function register(api: any) {
   api.registerService({
-    id: "declaw-node",
+    id: "dap-node",
 
     start: async () => {
       ensurePluginAllowed(api.config)
       ensureToolsAllowed(api.config)
       ensureChannelConfig(api.config)
 
-      const cfg: PluginConfig = api.config?.plugins?.entries?.["declaw"]?.config ?? {}
+      const cfg: PluginConfig = api.config?.plugins?.entries?.["dap"]?.config ?? {}
       dataDir = cfg.data_dir ?? dataDir
       peerPort = cfg.peer_port ?? peerPort
       const extraPeers: string[] = cfg.yggdrasil_peers ?? []
@@ -141,10 +141,10 @@ export default function register(api: any) {
       _yggTransport = new YggdrasilTransport()
       _quicTransport = new UDPTransport()
 
+      _transportManager.register(_quicTransport)
       if (!testMode) {
         _transportManager.register(_yggTransport)
       }
-      _transportManager.register(_quicTransport)
 
       const quicPort = cfg.quic_port ?? 8098
       const activeTransport = await _transportManager.start(identity, {
@@ -201,7 +201,7 @@ export default function register(api: any) {
       if (isFirstRun) {
         const quicActive = _quicTransport?.isActive()
         const welcomeLines = [
-          "Welcome to DeClaw P2P!",
+          "Welcome to DAP P2P!",
           "",
           `Your Agent ID: ${identity.agentId}`,
           yggInfo
@@ -218,10 +218,10 @@ export default function register(api: any) {
         setTimeout(() => {
           try {
             api.gateway?.receiveChannelMessage?.({
-              channelId: "declaw",
+              channelId: "dap",
               accountId: "system",
               text: welcomeLines.join("\n"),
-              senderId: "declaw-system",
+              senderId: "dap-system",
             })
           } catch { /* best effort */ }
         }, 2000)
@@ -263,14 +263,14 @@ export default function register(api: any) {
   } else {
     api.registerChannel({
       plugin: {
-        id: "declaw",
+        id: "dap",
         meta: {
-          id: "declaw",
-          label: "DeClaw",
-          selectionLabel: "DeClaw (P2P)",
-          docsPath: "/channels/declaw",
+          id: "dap",
+          label: "DAP",
+          selectionLabel: "DAP (P2P)",
+          docsPath: "/channels/dap",
           blurb: "Direct encrypted P2P messaging.",
-          aliases: ["p2p", "ygg", "ipv6-p2p"],
+          aliases: ["p2p", "ygg"],
         },
         capabilities: { chatTypes: ["direct"] },
         configSchema: CHANNEL_CONFIG_SCHEMA,
@@ -401,7 +401,7 @@ export default function register(api: any) {
             console.error("Plugin not started. Restart the gateway first.")
             return
           }
-          const cfg: PluginConfig = api.config?.plugins?.entries?.["declaw"]?.config ?? {}
+          const cfg: PluginConfig = api.config?.plugins?.entries?.["dap"]?.config ?? {}
           const bootstrapPeers: string[] = cfg.bootstrap_peers ?? []
           const all = [...DEFAULT_BOOTSTRAP_PEERS, ...bootstrapPeers]
           console.log(`Discovering peers via ${all.length || "0"} bootstrap node(s)...`)
@@ -443,7 +443,7 @@ export default function register(api: any) {
             }
           } else {
             console.log("Yggdrasil setup script:")
-            console.log("  curl -fsSL https://raw.githubusercontent.com/ReScienceLab/DeClaw/main/scripts/setup-yggdrasil.sh | sudo bash")
+            console.log("  curl -fsSL https://raw.githubusercontent.com/ReScienceLab/DAP/main/scripts/setup-yggdrasil.sh | sudo bash")
           }
         })
     },
@@ -590,7 +590,7 @@ export default function register(api: any) {
       if (!identity) {
         return { content: [{ type: "text", text: "P2P service not started." }] }
       }
-      const cfg: PluginConfig = api.config?.plugins?.entries?.["declaw"]?.config ?? {}
+      const cfg: PluginConfig = api.config?.plugins?.entries?.["dap"]?.config ?? {}
       const bootstrapPeers: string[] = cfg.bootstrap_peers ?? []
       const found = await bootstrapDiscovery(identity, peerPort, bootstrapPeers, _agentMeta)
       const total = listPeers().length

@@ -1,5 +1,5 @@
 networks:
-  declaw-sim:
+  dap-sim:
     driver: bridge
 
 volumes:
@@ -10,7 +10,7 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile.sim
-    container_name: declaw-sim-alice
+    container_name: dap-sim-alice
     hostname: alice
     # Yggdrasil needs NET_ADMIN to create a TUN interface and /dev/net/tun to open it
     cap_add:
@@ -18,7 +18,7 @@ services:
     devices:
       - /dev/net/tun:/dev/net/tun
     networks:
-      - declaw-sim
+      - dap-sim
     volumes:
       - sim-shared:/shared
     environment:
@@ -31,14 +31,14 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile.sim
-    container_name: declaw-sim-bob
+    container_name: dap-sim-bob
     hostname: bob
     cap_add:
       - NET_ADMIN
     devices:
       - /dev/net/tun:/dev/net/tun
     networks:
-      - declaw-sim
+      - dap-sim
     volumes:
       - sim-shared:/shared
     environment:

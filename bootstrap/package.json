@@ -1,8 +1,8 @@
 {
-  "name": "declaw-bootstrap",
+  "name": "dap-bootstrap",
   "version": "1.0.0",
   "type": "module",
-  "description": "DeClaw standalone bootstrap peer exchange server",
+  "description": "DAP standalone bootstrap peer exchange server",
   "main": "server.mjs",
   "scripts": {
     "start": "node server.mjs"

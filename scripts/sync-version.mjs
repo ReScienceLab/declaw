@@ -8,8 +8,8 @@ const plugin = JSON.parse(readFileSync('openclaw.plugin.json', 'utf8'))
 plugin.version = version
 writeFileSync('openclaw.plugin.json', JSON.stringify(plugin, null, 2) + '\n')
 
-let skill = readFileSync('skills/declaw/SKILL.md', 'utf8')
+let skill = readFileSync('skills/dap/SKILL.md', 'utf8')
 skill = skill.replace(/^version: .*/m, `version: "${version}"`)
-writeFileSync('skills/declaw/SKILL.md', skill)
+writeFileSync('skills/dap/SKILL.md', skill)
 
-console.log(`Synced version ${version} → openclaw.plugin.json, skills/declaw/SKILL.md`)
+console.log(`Synced version ${version} → openclaw.plugin.json, skills/dap/SKILL.md`)

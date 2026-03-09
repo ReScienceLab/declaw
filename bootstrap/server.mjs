@@ -1,5 +1,5 @@
 /**
- * DeClaw Bootstrap Node — standalone peer exchange server.
+ * DAP Bootstrap Node — standalone peer exchange server.
  * No OpenClaw dependency. Runs alongside a Yggdrasil daemon.
  *
  * Endpoints:
@@ -21,7 +21,7 @@ const AGENT_VERSION = process.env.AGENT_VERSION ?? "1.0.0";
 const PERSIST_INTERVAL_MS = 30_000;
 
 const KIMI_REGION = process.env.AWS_REGION ?? "us-east-2";
-const KIMI_SSM_PARAM = process.env.KIMI_SSM_PARAM ?? "/declaw/kimi-api-key";
+const KIMI_SSM_PARAM = process.env.KIMI_SSM_PARAM ?? "/dap/kimi-api-key";
 const RATE_LIMIT_MAX = parseInt(process.env.RATE_LIMIT_MAX ?? "10");
 const RATE_LIMIT_WINDOW_MS = parseInt(process.env.RATE_LIMIT_WINDOW_MS ?? String(60 * 60 * 1000));
 
@@ -175,7 +175,7 @@ function checkRateLimit(addr) {
   return true;
 }
 
-const PEER_DEFAULT_PORT = 8099; // standard DeClaw peer port (recipients may differ from our PORT)
+const PEER_DEFAULT_PORT = 8099; // standard DAP peer port (recipients may differ from our PORT)
 
 async function sendMessage(toYggAddr, content, toPort = PEER_DEFAULT_PORT) {
   if (!_selfYggAddr) return;
@@ -215,7 +215,7 @@ async function callKimi(userMessage) {
         messages: [
           {
             role: "system",
-            content: `You are a friendly AI assistant deployed on the DeClaw P2P network — an open-source project enabling direct encrypted messaging between AI agents over Yggdrasil IPv6. Your name is "${_agentName ?? "DeClaw Bootstrap Node"}". You are an always-on node to help new users get started. Keep replies concise (under 150 words). If asked how to find more peers, tell users to run: openclaw p2p discover`,
+            content: `You are a friendly AI assistant deployed on the DAP P2P network — an open-source project enabling direct encrypted messaging between AI agents over Yggdrasil IPv6. Your name is "${_agentName ?? "DAP Bootstrap Node"}". You are an always-on node to help new users get started. Keep replies concise (under 150 words). If asked how to find more peers, tell users to run: openclaw p2p discover`,
           },
           { role: "user", content: userMessage },
         ],
@@ -252,7 +252,7 @@ if (fs.existsSync(idFile)) {
 }
 const selfPubB64 = Buffer.from(selfKeypair.publicKey).toString("base64");
 let _selfYggAddr = null;
-let _agentName = process.env.AGENT_NAME ?? "DeClaw Bootstrap Node";
+let _agentName = process.env.AGENT_NAME ?? "DAP Bootstrap Node";
 
 // ---------------------------------------------------------------------------
 // Peer DB + pruning
@@ -391,7 +391,7 @@ console.log(`[bootstrap] Data dir: ${DATA_DIR}`);
 // Periodic sync with sibling bootstrap nodes
 // ---------------------------------------------------------------------------
 const BOOTSTRAP_JSON_URL =
-  "https://resciencelab.github.io/DeClaw/bootstrap.json";
+  "https://resciencelab.github.io/DAP/bootstrap.json";
 const SYNC_INTERVAL_MS = parseInt(process.env.SYNC_INTERVAL_MS ?? String(5 * 60 * 1000));
 
 async function getSelfYggAddr() {

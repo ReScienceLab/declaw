@@ -19,14 +19,14 @@ describe("YggdrasilTransport", () => {
     const yt = new YggdrasilTransport()
     const ep = yt.getEndpoint()
     assert.equal(ep.transport, "yggdrasil")
-    assert.equal(ep.priority, 1)
+    assert.equal(ep.priority, 10)
   })
 
   it("start returns false when yggdrasil binary unavailable", async () => {
     const yt = new YggdrasilTransport()
     const id = { agentId: "test", publicKey: "", privateKey: "", cgaIpv6: "", yggIpv6: "" }
     // On CI/test machines without yggdrasil installed, this should return false
-    const ok = await yt.start(id, { dataDir: "/tmp/declaw-test-ygg" })
+    const ok = await yt.start(id, { dataDir: "/tmp/dap-test-ygg" })
     // If yggdrasil is not installed, ok is false; if it is installed, ok depends on daemon
     assert.equal(typeof ok, "boolean")
   })

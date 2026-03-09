@@ -1,4 +1,4 @@
-# IPv6 P2P — Example Interaction Flows
+# DAP — Example Interaction Flows
 
 ## Flow 1 — Discover peers on the network
 

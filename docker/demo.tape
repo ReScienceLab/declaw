@@ -1,4 +1,4 @@
-# DeClaw demo — agent-to-agent P2P over Yggdrasil IPv6
+# DAP demo — agent-to-agent P2P over Yggdrasil IPv6
 # Generates: assets/demo.gif
 # Usage: vhs docker/demo.tape
 
@@ -23,7 +23,7 @@ Set LoopOffset    50%
 
 # ── cd to project root (hidden) ───────────────────────────────────────────────
 Hide
-Type "cd /Users/yilin/Developer/GitPlayground/openclaw-ipv6-p2p"
+Type "cd /Users/yilin/Developer/ReScienceLab/DAP"
 Enter
 Sleep 300ms
 Show

@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# DeClaw — Yggdrasil setup script
+# DAP — Yggdrasil setup script
 # Installs Yggdrasil, generates a config with TCP admin endpoint
 # (avoids UNIX socket permission issues), adds public peers, starts the daemon.
 #
 # Usage:
 #   sudo bash scripts/setup-yggdrasil.sh
-#   curl -fsSL https://raw.githubusercontent.com/ReScienceLab/DeClaw/main/scripts/setup-yggdrasil.sh | sudo bash
+#   curl -fsSL https://raw.githubusercontent.com/ReScienceLab/DAP/main/scripts/setup-yggdrasil.sh | sudo bash
 #   — or via plugin —
 #   openclaw p2p setup
 
@@ -294,7 +294,7 @@ verify() {
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 main() {
-  info "DeClaw — Yggdrasil setup"
+  info "DAP — Yggdrasil setup"
   echo ""
 
   check_root

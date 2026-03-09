@@ -1,5 +1,5 @@
 /**
- * Transport abstraction layer for DeClaw P2P communication.
+ * Transport abstraction layer for DAP P2P communication.
  *
  * Defines the interface that all transport backends (Yggdrasil, QUIC, native IPv6)
  * must implement, plus the TransportManager that handles automatic selection.

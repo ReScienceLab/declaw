@@ -1,6 +1,6 @@
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
-import { agentIdFromPublicKey, deriveDidKey, generateIdentity, loadOrCreateIdentity } from "../dist/identity.js"
+import { agentIdFromPublicKey, deriveDidKey, generateIdentity, loadOrCreateIdentity, isGlobalUnicastIPv6, getPublicIPv6 } from "../dist/identity.js"
 import * as fs from "fs"
 import * as path from "path"
 import * as os from "os"
@@ -62,9 +62,43 @@ describe("generateIdentity", () => {
   })
 })
 
+describe("isGlobalUnicastIPv6", () => {
+  const accept = [
+    "2001:db8::1",
+    "2600:1f18:1234:5678::1",
+    "2a00:1450:4001:81a::200e",
+    "3fff::1",
+  ]
+  const reject = [
+    "::1",                                    // loopback
+    "fe80::1",                                // link-local
+    "fd00::1",                                // ULA
+    "fc00::1",                                // ULA
+    "200:697f:bda:1e8e:706a:6c5e:630b:51d",  // Yggdrasil
+    "201:cbd5:ca3:993a:f985:84e5:9735:cd1e", // Yggdrasil
+    "::ffff:192.168.1.1",                     // IPv4-mapped
+    "1.2.3.4",                                // not IPv6
+  ]
+  for (const addr of accept) {
+    it(`accepts ${addr}`, () => assert.ok(isGlobalUnicastIPv6(addr)))
+  }
+  for (const addr of reject) {
+    it(`rejects ${addr}`, () => assert.ok(!isGlobalUnicastIPv6(addr)))
+  }
+})
+
+describe("getPublicIPv6", () => {
+  it("returns null or a globally-routable IPv6 string", () => {
+    const result = getPublicIPv6()
+    if (result !== null) {
+      assert.ok(isGlobalUnicastIPv6(result), `expected global unicast, got ${result}`)
+    }
+  })
+})
+
 describe("loadOrCreateIdentity", () => {
   it("adds agentId to a legacy identity file on load", () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "declaw-test-"))
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "dap-test-"))
     const idFile = path.join(tmpDir, "identity.json")
     const legacy = {
       publicKey: "dGVzdHB1YmtleQ==",
@@ -83,7 +117,7 @@ describe("loadOrCreateIdentity", () => {
   })
 
   it("does not overwrite existing agentId", () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "declaw-test-"))
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "dap-test-"))
     const idFile = path.join(tmpDir, "identity.json")
     const existing = generateIdentity()
     fs.writeFileSync(idFile, JSON.stringify(existing))

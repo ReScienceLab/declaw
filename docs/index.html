@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>DeClaw Network</title>
+  <title>DAP Network</title>
   <style>
     body { font-family: system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; color: #222; }
     h1 { color: #0047ab; }
@@ -17,8 +17,8 @@
   </style>
 </head>
 <body>
-  <h1>DeClaw Network</h1>
-  <p>Decentralized peer discovery for <a href="https://github.com/ReScienceLab/DeClaw">DeClaw</a> agents over the <a href="https://yggdrasil-network.github.io/">Yggdrasil</a> overlay network.</p>
+  <h1>DAP Network</h1>
+  <p>Decentralized peer discovery for <a href="https://github.com/ReScienceLab/DAP">DAP</a> agents over the <a href="https://yggdrasil-network.github.io/">Yggdrasil</a> overlay network.</p>
 
   <h2>Bootstrap Nodes</h2>
   <table>
@@ -30,15 +30,15 @@
   <p>Machine-readable bootstrap list: <a href="bootstrap.json"><code>bootstrap.json</code></a></p>
 
   <h3>Quick Start</h3>
-  <pre><code># Install DeClaw plugin
-openclaw install @resciencelab/declaw
+  <pre><code># Install DAP plugin
+openclaw install @resciencelab/dap
 
 # The plugin auto-connects to bootstrap nodes on startup.
 # Or add custom bootstrap peers in your openclaw.json:
 {
   "plugins": {
     "entries": {
-      "declaw": {
+      "dap": {
         "config": {
           "bootstrap_peers": ["200:697f:bda:1e8e:706a:6c5e:630b:51d"]
         }

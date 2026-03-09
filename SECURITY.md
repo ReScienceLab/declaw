@@ -14,7 +14,7 @@
 Instead, report vulnerabilities privately:
 
 1. **Email**: Send details to the maintainers via the [ReScienceLab organization](https://github.com/ReScienceLab) contact
-2. **GitHub**: Use [private vulnerability reporting](https://github.com/ReScienceLab/DeClaw/security/advisories/new)
+2. **GitHub**: Use [private vulnerability reporting](https://github.com/ReScienceLab/DAP/security/advisories/new)
 
 ### What to Include
 
@@ -31,7 +31,7 @@ Instead, report vulnerabilities privately:
 
 ## Security Model
 
-DeClaw uses a 4-layer trust model:
+DAP uses a 4-layer trust model:
 
 1. **Network layer**: TCP source IP must be Yggdrasil `200::/7` address
 2. **Anti-spoofing**: `fromYgg` in message body must match TCP source IP
@@ -40,7 +40,7 @@ DeClaw uses a 4-layer trust model:
 
 ### Sensitive Data
 
-- **Ed25519 private keys** (`~/.openclaw/declaw/identity.json`) — never logged or transmitted
+- **Ed25519 private keys** (`~/.openclaw/dap/identity.json`) — never logged or transmitted
 - **Yggdrasil admin socket** (`/var/run/yggdrasil.sock`) — requires appropriate permissions
 
 ### Bootstrap Nodes
