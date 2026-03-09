@@ -3,7 +3,7 @@ import assert from "node:assert/strict"
 import * as fs from "fs"
 import * as path from "path"
 import * as os from "os"
-import { initDb, upsertPeer, upsertDiscoveredPeer, listPeers, getPeer, removePeer, flushDb, tofuVerifyAndCache, tofuReplaceKey, setTofuTtl, getPeerIds, pruneStale, getEndpointAddress } from "../dist/peer-db.js"
+import { initDb, upsertPeer, upsertDiscoveredPeer, listPeers, getPeer, removePeer, flushDb, tofuVerifyAndCache, tofuReplaceKey, setTofuTtl, getPeerIds, pruneStale, getEndpointAddress, findPeersByCapability } from "../dist/peer-db.js"
 import { generateIdentity } from "../dist/identity.js"
 
 let tmpDir
@@ -166,5 +166,49 @@ describe("peer-db (agentId-keyed)", () => {
     assert.equal(getEndpointAddress(peer, "yggdrasil"), "200::1")
     assert.equal(getEndpointAddress(peer, "quic"), "1.2.3.4")
     assert.equal(getEndpointAddress(peer, "tcp"), null)
+  })
+})
+
+describe("findPeersByCapability", () => {
+  it("returns peers with exact capability match", () => {
+    const a = generateIdentity()
+    const b = generateIdentity()
+    const c = generateIdentity()
+    upsertDiscoveredPeer(a.agentId, a.publicKey, { capabilities: ["code:review", "lang:translate-ja"] })
+    upsertDiscoveredPeer(b.agentId, b.publicKey, { capabilities: ["data:visualize"] })
+    upsertDiscoveredPeer(c.agentId, c.publicKey, { capabilities: ["code:review"] })
+
+    const results = findPeersByCapability("code:review")
+    const ids = results.map((p) => p.agentId)
+    assert.ok(ids.includes(a.agentId))
+    assert.ok(ids.includes(c.agentId))
+    assert.ok(!ids.includes(b.agentId))
+  })
+
+  it("returns peers matching capability prefix", () => {
+    const a = generateIdentity()
+    const b = generateIdentity()
+    upsertDiscoveredPeer(a.agentId, a.publicKey, { capabilities: ["code:review", "code:test"] })
+    upsertDiscoveredPeer(b.agentId, b.publicKey, { capabilities: ["lang:translate-ja"] })
+
+    const results = findPeersByCapability("code:")
+    const ids = results.map((p) => p.agentId)
+    assert.ok(ids.includes(a.agentId))
+    assert.ok(!ids.includes(b.agentId))
+  })
+
+  it("returns empty array when no peers match", () => {
+    const a = generateIdentity()
+    upsertDiscoveredPeer(a.agentId, a.publicKey, { capabilities: ["data:visualize"] })
+    assert.deepEqual(findPeersByCapability("code:review"), [])
+  })
+
+  it("returns all peers when capability is empty string", () => {
+    const a = generateIdentity()
+    const b = generateIdentity()
+    upsertDiscoveredPeer(a.agentId, a.publicKey, { capabilities: ["code:review"] })
+    upsertDiscoveredPeer(b.agentId, b.publicKey, { capabilities: ["lang:ja"] })
+    // empty string prefix matches everything
+    assert.equal(findPeersByCapability("").length, 2)
   })
 })

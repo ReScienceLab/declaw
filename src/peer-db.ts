@@ -248,3 +248,14 @@ export function getEndpointAddress(peer: DiscoveredPeerRecord, transport: string
     .sort((a, b) => a.priority - b.priority)[0]
   return ep?.address ?? null
 }
+
+/**
+ * Find peers that declare a specific capability.
+ * @param cap Capability string, e.g. "code:review" or "lang:translate-ja".
+ *            Pass a namespace prefix like "code:" to match all code capabilities.
+ */
+export function findPeersByCapability(cap: string): DiscoveredPeerRecord[] {
+  return Object.values(store.peers)
+    .filter((p) => p.capabilities?.some((c) => c === cap || c.startsWith(cap)))
+    .sort((a, b) => b.lastSeen - a.lastSeen)
+}

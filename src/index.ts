@@ -9,7 +9,7 @@ import * as path from "path"
 import { execSync } from "child_process"
 import { loadOrCreateIdentity, getActualIpv6, deriveDidKey } from "./identity"
 import { startYggdrasil, stopYggdrasil, isYggdrasilAvailable, detectExternalYggdrasil, getYggdrasilNetworkInfo } from "./yggdrasil"
-import { initDb, listPeers, upsertPeer, removePeer, getPeer, flushDb, getPeerIds, getEndpointAddress } from "./peer-db"
+import { initDb, listPeers, upsertPeer, removePeer, getPeer, flushDb, getPeerIds, getEndpointAddress, findPeersByCapability } from "./peer-db"
 import { startPeerServer, stopPeerServer, getInbox, setSelfMeta, handleUdpMessage } from "./peer-server"
 import { sendP2PMessage, pingPeer, broadcastLeave, SendOptions } from "./peer-client"
 import { bootstrapDiscovery, startDiscoveryLoop, stopDiscoveryLoop, DEFAULT_BOOTSTRAP_PEERS } from "./peer-discovery"
@@ -476,16 +476,24 @@ export default function register(api: any) {
 
   api.registerCommand({
     name: "p2p-peers",
-    description: "List known P2P peers",
-    handler: () => {
-      const peers = listPeers()
-      if (peers.length === 0) return { text: "No peers yet. Use `openclaw p2p add <agent-id>`." }
+    description: "List known P2P peers. Pass --capability <cap> to filter by capability (e.g. code:review)",
+    handler: (args?: string[]) => {
+      const capFlag = args?.indexOf("--capability") ?? -1
+      const cap = capFlag >= 0 ? args?.[capFlag + 1] : undefined
+      const peers = cap ? findPeersByCapability(cap) : listPeers()
+      if (peers.length === 0) {
+        return cap
+          ? { text: `No peers with capability \`${cap}\`.` }
+          : { text: "No peers yet. Use `openclaw p2p add <agent-id>`." }
+      }
       const lines = peers.map((p) => {
         const label = p.alias ? ` — ${p.alias}` : ""
         const ver = p.version ? ` [v${p.version}]` : ""
-        return `\`${p.agentId}\`${label}${ver}`
+        const caps = p.capabilities?.length ? ` (${p.capabilities.join(", ")})` : ""
+        return `\`${p.agentId}\`${label}${ver}${caps}`
       })
-      return { text: `**Known Peers**\n${lines.join("\n")}` }
+      const header = cap ? `**Peers with capability \`${cap}\`**` : `**Known Peers**`
+      return { text: `${header}\n${lines.join("\n")}` }
     },
   })
 
@@ -542,18 +550,37 @@ export default function register(api: any) {
 
   api.registerTool({
     name: "p2p_list_peers",
-    description: "List all known P2P peers.",
-    parameters: { type: "object", properties: {}, required: [] },
-    async execute(_id: string, _params: Record<string, never>) {
-      const peers = listPeers()
+    description: "List all known P2P peers. Optionally filter by capability (e.g. 'code:review', 'lang:translate-ja', or a prefix like 'code:').",
+    parameters: {
+      type: "object",
+      properties: {
+        capability: {
+          type: "string",
+          description: "Filter peers by capability string or prefix (e.g. 'code:review' or 'code:')",
+        },
+      },
+      required: [],
+    },
+    async execute(_id: string, params: { capability?: string }) {
+      const peers = params.capability
+        ? findPeersByCapability(params.capability)
+        : listPeers()
       if (peers.length === 0) {
-        return { content: [{ type: "text", text: "No peers yet." }] }
+        return {
+          content: [{
+            type: "text",
+            text: params.capability
+              ? `No peers with capability "${params.capability}".`
+              : "No peers yet.",
+          }],
+        }
       }
       const lines = peers.map((p) => {
         const ago = Math.round((Date.now() - p.lastSeen) / 1000)
         const label = p.alias ? ` — ${p.alias}` : ""
         const ver = p.version ? ` [v${p.version}]` : ""
-        return `${p.agentId}${label}${ver} — last seen ${ago}s ago`
+        const caps = p.capabilities?.length ? ` [${p.capabilities.join(", ")}]` : ""
+        return `${p.agentId}${label}${ver}${caps} — last seen ${ago}s ago`
       })
       return { content: [{ type: "text", text: lines.join("\n") }] }
     },
