@@ -49,4 +49,9 @@ jobs:
         run: |
           VERSION=$(node -p "require('./package.json').version")
           npx clawhub@latest auth login --token "$CLAWHUB_TOKEN" --no-browser
+          # Patch clawhub publish.js to include acceptLicenseTerms (required by API, missing in CLI v0.7.0)
+          PUBLISH_JS=$(find ~/.npm/_npx -path "*/clawhub/dist/cli/commands/publish.js" 2>/dev/null | head -1)
+          if [ -n "$PUBLISH_JS" ]; then
+            sed -i '/tags,/a\            acceptLicenseTerms: true,' "$PUBLISH_JS"
+          fi
           npx clawhub@latest publish "$(pwd)/skills/declaw" --version "$VERSION"
