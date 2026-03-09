@@ -12,6 +12,7 @@ import Fastify from "fastify";
 import nacl from "tweetnacl";
 import fs from "fs";
 import path from "path";
+import dgram from "node:dgram";
 
 const PORT = parseInt(process.env.PEER_PORT ?? "8099");
 const DATA_DIR = process.env.DATA_DIR ?? "/data";
@@ -382,10 +383,89 @@ server.post("/peer/message", async (req, reply) => {
   if (replyText) await sendMessage(msg.fromYgg, replyText);
 });
 
+// ---------------------------------------------------------------------------
+// UDP peer registry for QUIC/UDP rendezvous (port 8098)
+// ---------------------------------------------------------------------------
+const udpPeers = new Map() // agentId -> { agentId, publicKey, address, port, lastSeen }
+const UDP_PEER_TTL_MS = 10 * 60 * 1000 // 10 minutes
+
+function pruneUdpPeers() {
+  const cutoff = Date.now() - UDP_PEER_TTL_MS
+  for (const [id, p] of udpPeers) {
+    if (p.lastSeen < cutoff) udpPeers.delete(id)
+  }
+}
+
+server.get("/peer/udp-peers", async () => {
+  pruneUdpPeers()
+  return {
+    peers: Array.from(udpPeers.values()).map(p => ({
+      agentId: p.agentId,
+      address: p.address,
+      port: p.port,
+      lastSeen: p.lastSeen,
+    }))
+  }
+})
+
 await loadKimiKey();
 await server.listen({ port: PORT, host: "::" });
 console.log(`[bootstrap] Listening on [::]:${PORT}${TEST_MODE ? " (test mode)" : ""}`);
 console.log(`[bootstrap] Data dir: ${DATA_DIR}`);
+
+// ---------------------------------------------------------------------------
+// UDP socket for QUIC peer rendezvous (port 8098)
+// ---------------------------------------------------------------------------
+const udpServer = dgram.createSocket('udp6')
+
+udpServer.on('error', (err) => {
+  console.error('[udp] server error:', err.message)
+})
+
+udpServer.on('message', (msg, rinfo) => {
+  pruneUdpPeers()
+
+  let data
+  try {
+    data = JSON.parse(msg.toString('utf-8'))
+  } catch {
+    return // ignore malformed
+  }
+
+  if (!data || !data.agentId || data.type !== 'announce') return
+
+  // Record the sender's NAT-mapped public endpoint
+  const senderEndpoint = `${rinfo.address}:${rinfo.port}`
+  udpPeers.set(data.agentId, {
+    agentId: data.agentId,
+    publicKey: data.publicKey ?? '',
+    address: rinfo.address,
+    port: rinfo.port,
+    lastSeen: Date.now(),
+  })
+
+  // Reply with current peer list + their observed endpoint
+  const peerList = Array.from(udpPeers.values())
+    .filter(p => p.agentId !== data.agentId)
+    .slice(0, 20)
+    .map(p => ({ agentId: p.agentId, address: p.address, port: p.port }))
+
+  const reply = Buffer.from(JSON.stringify({
+    ok: true,
+    yourEndpoint: senderEndpoint,
+    peers: peerList,
+  }))
+
+  udpServer.send(reply, rinfo.port, rinfo.address, (err) => {
+    if (err) console.warn('[udp] reply error:', err.message)
+  })
+
+  console.log(`[udp] announce from ${senderEndpoint} agentId=${data.agentId.slice(0, 16)}...`)
+})
+
+udpServer.bind(8098, '::', () => {
+  console.log('[udp] Listening on [::]:8098')
+})
 
 // ---------------------------------------------------------------------------
 // Periodic sync with sibling bootstrap nodes
