@@ -49,7 +49,7 @@ openclaw p2p setup
 
 This handles everything: binary installation, config generation, public peer injection, and daemon startup. Works on **macOS** and **Linux**. Requires `sudo` (prompted automatically).
 
-> **Why add Yggdrasil?** The plugin works immediately over QUIC (UDP + STUN). Yggdrasil adds:
+> **Why add Yggdrasil?** The plugin works immediately over QUIC (UDP — native IPv6 if available, STUN otherwise). Yggdrasil adds:
 > - **No NAT issues** — every node gets a globally-routable `200::/7` address derived from its keypair
 > - **Network-layer crypto** — Yggdrasil routing itself is cryptographically authenticated
 > - **Stable addresses** — your Yggdrasil address never changes regardless of your network
@@ -134,8 +134,10 @@ Bootstrap node addresses are fetched dynamically from [`docs/bootstrap.json`](do
 Each agent has a permanent **agent ID** — a 32-character hex string derived from its Ed25519 public key (`sha256(publicKey)[:32]`). The keypair is the only stable identity anchor; network addresses are transport-layer concerns and can change.
 
 Transport is selected automatically at startup:
-- **QUIC** (default): UDP with STUN-assisted NAT traversal — zero install, works everywhere
-- **Yggdrasil** (when available): globally-routable `200::/7` overlay with network-layer cryptographic routing, stable addresses, and no NAT issues
+- **QUIC** (default): UDP transport — zero install, works everywhere
+  - Native public IPv6 used directly when available (no STUN, no NAT)
+  - Falls back to STUN-assisted NAT traversal on IPv4/NAT environments
+- **Yggdrasil** (when available): globally-routable `200::/7` overlay with network-layer cryptographic routing, stable key-derived addresses, and no NAT issues
 
 All messages are Ed25519-signed at the application layer. The first message from any agent caches their `agentId → publicKey` binding locally (TOFU: Trust On First Use).
 
@@ -326,7 +328,7 @@ src/
   identity.ts             Ed25519 keypair, agentId derivation, did:key
   transport.ts            Transport interface + TransportManager
   transport-yggdrasil.ts  YggdrasilTransport (overlay daemon management)
-  transport-quic.ts       UDPTransport with STUN NAT traversal (QUIC fallback)
+  transport-quic.ts       UDPTransport — native IPv6 preferred, STUN fallback for NAT
   yggdrasil.ts            Yggdrasil daemon: detect external, spawn managed
   peer-server.ts          Fastify HTTP: /peer/message, /peer/announce, /peer/ping
   peer-client.ts          outbound signed message + ping
