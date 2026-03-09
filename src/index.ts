@@ -18,7 +18,7 @@ import { buildChannel, wireInboundToGateway, CHANNEL_CONFIG_SCHEMA } from "./cha
 import { Identity, YggdrasilInfo, PluginConfig, Endpoint } from "./types"
 import { TransportManager } from "./transport"
 import { YggdrasilTransport } from "./transport-yggdrasil"
-import { QUICTransport } from "./transport-quic"
+import { UDPTransport } from "./transport-quic"
 
 const DECLAW_TOOLS = [
   "p2p_add_peer", "p2p_discover", "p2p_list_peers",
@@ -74,7 +74,7 @@ let _bootstrapPeers: string[] = []
 let _agentMeta: { name?: string; version?: string; endpoints?: Endpoint[] } = {}
 let _transportManager: TransportManager | null = null
 let _yggTransport: YggdrasilTransport | null = null
-let _quicTransport: QUICTransport | null = null
+let _quicTransport: UDPTransport | null = null
 
 function buildSendOpts(peerIdOrAddr?: string): SendOptions {
   const peer = peerIdOrAddr ? getPeer(peerIdOrAddr) : null
@@ -139,7 +139,7 @@ export default function register(api: any) {
 
       _transportManager = new TransportManager()
       _yggTransport = new YggdrasilTransport()
-      _quicTransport = new QUICTransport()
+      _quicTransport = new UDPTransport()
 
       if (!testMode) {
         _transportManager.register(_yggTransport)

@@ -1,12 +1,15 @@
 /**
- * QUIC transport backend — zero-install fallback when Yggdrasil is unavailable.
+ * UDP transport backend — zero-install fallback when Yggdrasil is unavailable.
  *
- * Uses Node.js experimental QUIC API (node:quic, available in Node 24+).
- * When native QUIC is not available, falls back to a UDP-based simple transport
- * that provides the same interface with STUN-assisted NAT traversal.
+ * IMPORTANT: This is a plain UDP datagram transport, NOT a real QUIC
+ * implementation. It provides:
+ *   - Unencrypted, unreliable UDP delivery (no retransmission, no ordering)
+ *   - STUN-assisted NAT traversal for public endpoint discovery
+ *   - Messages >MTU (~1400 bytes) may be silently dropped
  *
- * This transport enables agents to communicate without installing any daemon.
- * Ed25519 identity and signatures remain the trust anchor regardless of transport.
+ * Security relies entirely on the application-layer Ed25519 signatures.
+ * When Node.js native QUIC (node:quic, Node 24+) becomes stable, this
+ * transport should be upgraded to use it for transport-layer encryption.
  */
 import * as dgram from "node:dgram"
 import * as net from "node:net"
@@ -128,7 +131,7 @@ function parseStunResponse(data: Buffer): { address: string; port: number } | nu
   return null
 }
 
-export class QUICTransport implements Transport {
+export class UDPTransport implements Transport {
   readonly id: TransportId = "quic"
   private _address: string = ""
   private _port: number = 0

@@ -50,7 +50,7 @@ export interface Transport {
  *
  * Selection order:
  *   1. Detect Yggdrasil daemon → use YggdrasilTransport
- *   2. Fallback → use QUICTransport (zero-install)
+ *   2. Fallback → use UDPTransport (zero-install)
  */
 export class TransportManager {
   private _transports: Map<TransportId, Transport> = new Map()

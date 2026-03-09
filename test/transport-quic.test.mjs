@@ -1,7 +1,7 @@
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
 import { parseHostPort, isNativeQuicAvailable, parseStunResponse } from "../dist/transport-quic.js"
-import { QUICTransport } from "../dist/transport-quic.js"
+import { UDPTransport } from "../dist/transport-quic.js"
 
 describe("parseHostPort", () => {
   it("parses [ipv6]:port format", () => {
@@ -76,27 +76,27 @@ describe("parseStunResponse", () => {
   })
 })
 
-describe("QUICTransport", () => {
+describe("UDPTransport", () => {
   it("has id 'quic'", () => {
-    const qt = new QUICTransport()
+    const qt = new UDPTransport()
     assert.equal(qt.id, "quic")
   })
 
   it("is not active before start", () => {
-    const qt = new QUICTransport()
+    const qt = new UDPTransport()
     assert.equal(qt.isActive(), false)
     assert.equal(qt.address, "")
   })
 
   it("getEndpoint returns correct structure", () => {
-    const qt = new QUICTransport()
+    const qt = new UDPTransport()
     const ep = qt.getEndpoint()
     assert.equal(ep.transport, "quic")
     assert.equal(ep.priority, 10)
   })
 
   it("can start and stop in test mode", async () => {
-    const qt = new QUICTransport()
+    const qt = new UDPTransport()
     const id = { agentId: "test", publicKey: "", privateKey: "", cgaIpv6: "", yggIpv6: "" }
     const ok = await qt.start(id, { testMode: true, quicPort: 0 })
     assert.equal(ok, true)
@@ -107,7 +107,7 @@ describe("QUICTransport", () => {
   })
 
   it("registers message handlers", () => {
-    const qt = new QUICTransport()
+    const qt = new UDPTransport()
     let called = false
     qt.onMessage(() => { called = true })
     // Handler registered but not called since we haven't started
