@@ -23,14 +23,14 @@ describe("canonicalize", () => {
   it("sorts keys inside arrays of objects", () => {
     const input = {
       peers: [
-        { yggAddr: "200::1", publicKey: "pk1", lastSeen: 100 },
-        { lastSeen: 200, yggAddr: "200::2", publicKey: "pk2" },
+        { agentId: "aabbcc01", publicKey: "pk1", lastSeen: 100 },
+        { lastSeen: 200, agentId: "aabbcc02", publicKey: "pk2" },
       ],
     };
     const result = JSON.stringify(canonicalize(input));
     // Both objects in array should have keys in alphabetical order
-    assert.ok(result.includes('"lastSeen":100,"publicKey":"pk1","yggAddr":"200::1"'));
-    assert.ok(result.includes('"lastSeen":200,"publicKey":"pk2","yggAddr":"200::2"'));
+    assert.ok(result.includes('"agentId":"aabbcc01","lastSeen":100,"publicKey":"pk1"'));
+    assert.ok(result.includes('"agentId":"aabbcc02","lastSeen":200,"publicKey":"pk2"'));
   });
 
   it("handles primitives and null", () => {
@@ -41,8 +41,8 @@ describe("canonicalize", () => {
   });
 
   it("produces identical serialization regardless of key insertion order", () => {
-    const a = { fromYgg: "200::1", publicKey: "pk", timestamp: 1, peers: [{ yggAddr: "x", lastSeen: 1 }] };
-    const b = { peers: [{ lastSeen: 1, yggAddr: "x" }], timestamp: 1, publicKey: "pk", fromYgg: "200::1" };
+    const a = { from: "aabbcc01", publicKey: "pk", timestamp: 1, peers: [{ agentId: "x", lastSeen: 1 }] };
+    const b = { peers: [{ lastSeen: 1, agentId: "x" }], timestamp: 1, publicKey: "pk", from: "aabbcc01" };
     assert.equal(
       JSON.stringify(canonicalize(a)),
       JSON.stringify(canonicalize(b))
@@ -58,19 +58,19 @@ describe("signMessage + verifySignature with nested data", () => {
   const privB64 = Buffer.from(keypair.secretKey.slice(0, 32)).toString("base64");
 
   it("verifies signature on flat object", () => {
-    const data = { fromYgg: "200::1", publicKey: pubB64, timestamp: Date.now() };
+    const data = { from: "aabbcc01", publicKey: pubB64, timestamp: Date.now() };
     const sig = signMessage(privB64, data);
     assert.equal(verifySignature(pubB64, data, sig), true);
   });
 
   it("verifies signature on object with nested peers array", () => {
     const data = {
-      fromYgg: "200::1",
+      from: "aabbcc01",
       publicKey: pubB64,
       timestamp: Date.now(),
       peers: [
-        { yggAddr: "200::2", publicKey: "pk2", lastSeen: 100 },
-        { yggAddr: "200::3", publicKey: "pk3", lastSeen: 200 },
+        { agentId: "aabbcc02", publicKey: "pk2", lastSeen: 100 },
+        { agentId: "aabbcc03", publicKey: "pk3", lastSeen: 200 },
       ],
     };
     const sig = signMessage(privB64, data);
@@ -79,35 +79,35 @@ describe("signMessage + verifySignature with nested data", () => {
 
   it("verifies even when nested key order differs", () => {
     const dataSign = {
-      fromYgg: "200::1",
+      from: "aabbcc01",
       publicKey: pubB64,
       timestamp: 999,
-      peers: [{ yggAddr: "200::2", publicKey: "pk2", lastSeen: 100 }],
+      peers: [{ agentId: "aabbcc02", publicKey: "pk2", lastSeen: 100 }],
     };
     const sig = signMessage(privB64, dataSign);
 
     // Verify with different key insertion order
     const dataVerify = {
-      peers: [{ lastSeen: 100, yggAddr: "200::2", publicKey: "pk2" }],
+      peers: [{ lastSeen: 100, agentId: "aabbcc02", publicKey: "pk2" }],
       timestamp: 999,
       publicKey: pubB64,
-      fromYgg: "200::1",
+      from: "aabbcc01",
     };
     assert.equal(verifySignature(pubB64, dataVerify, sig), true);
   });
 
   it("rejects tampered nested field", () => {
     const data = {
-      fromYgg: "200::1",
+      from: "aabbcc01",
       publicKey: pubB64,
       timestamp: 999,
-      peers: [{ yggAddr: "200::2", publicKey: "pk2", lastSeen: 100 }],
+      peers: [{ agentId: "aabbcc02", publicKey: "pk2", lastSeen: 100 }],
     };
     const sig = signMessage(privB64, data);
 
     const tampered = {
       ...data,
-      peers: [{ yggAddr: "200::EVIL", publicKey: "pk2", lastSeen: 100 }],
+      peers: [{ agentId: "evil0000", publicKey: "pk2", lastSeen: 100 }],
     };
     assert.equal(verifySignature(pubB64, tampered, sig), false);
   });

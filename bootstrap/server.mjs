@@ -1,6 +1,6 @@
 /**
  * DAP Bootstrap Node — standalone peer exchange server.
- * No OpenClaw dependency. Runs alongside a Yggdrasil daemon.
+ * No OpenClaw dependency. Runs on plain HTTP/TCP.
  *
  * Endpoints:
  *   GET  /peer/ping     — health check
@@ -13,6 +13,7 @@ import nacl from "tweetnacl";
 import fs from "fs";
 import path from "path";
 import dgram from "node:dgram";
+import crypto from "node:crypto";
 
 const PORT = parseInt(process.env.PEER_PORT ?? "8099");
 const DATA_DIR = process.env.DATA_DIR ?? "/data";
@@ -27,96 +28,19 @@ const RATE_LIMIT_MAX = parseInt(process.env.RATE_LIMIT_MAX ?? "10");
 const RATE_LIMIT_WINDOW_MS = parseInt(process.env.RATE_LIMIT_WINDOW_MS ?? String(60 * 60 * 1000));
 
 let kimiApiKey = process.env.KIMI_API_KEY ?? null;
-const rateLimits = new Map(); // yggAddr -> { count, windowStart }
-const tofuCache = new Map();  // yggAddr -> publicKey b64
-
-// ---------------------------------------------------------------------------
-// Peer DB (in-memory + JSON persistence)
-// ---------------------------------------------------------------------------
-const peers = new Map(); // yggAddr -> PeerRecord
-
-function loadPeers() {
-  const file = path.join(DATA_DIR, "peers.json");
-  if (!fs.existsSync(file)) return;
-  try {
-    const records = JSON.parse(fs.readFileSync(file, "utf8"));
-    for (const r of records) peers.set(r.yggAddr, r);
-    console.log(`[bootstrap] Loaded ${peers.size} peers from disk`);
-  } catch (e) {
-    console.warn("[bootstrap] Could not load peers.json:", e.message);
-  }
-}
-
-function savePeers() {
-  const file = path.join(DATA_DIR, "peers.json");
-  try {
-    fs.writeFileSync(file, JSON.stringify([...peers.values()], null, 2));
-  } catch (e) {
-    console.warn("[bootstrap] Could not save peers.json:", e.message);
-  }
-}
-
-/**
- * Upsert a peer record.
- * opts.lastSeen: if provided (gossip path), preserve provenance — only advance if newer.
- * If omitted (direct announce path), update to now.
- */
-function upsertPeer(yggAddr, publicKey, opts = {}) {
-  const now = Date.now();
-  const existing = peers.get(yggAddr);
-  let lastSeen;
-  if (opts.lastSeen !== undefined) {
-    lastSeen = Math.max(existing?.lastSeen ?? 0, opts.lastSeen);
-  } else {
-    lastSeen = now;
-  }
-  peers.set(yggAddr, {
-    yggAddr,
-    publicKey,
-    alias: opts.alias ?? existing?.alias ?? "",
-    version: opts.version ?? existing?.version,
-    firstSeen: existing?.firstSeen ?? now,
-    lastSeen,
-    source: opts.source ?? "gossip",
-    discoveredVia: opts.discoveredVia ?? existing?.discoveredVia,
-  });
-  // Evict oldest peers if we exceed MAX_PEERS
-  if (peers.size > MAX_PEERS) {
-    const sorted = [...peers.values()].sort((a, b) => a.lastSeen - b.lastSeen);
-    peers.delete(sorted[0].yggAddr);
-  }
-}
-
-function pruneStale(maxAgeMs, protectedAddrs = []) {
-  const cutoff = Date.now() - maxAgeMs;
-  let pruned = 0;
-  for (const [addr, record] of peers) {
-    if (protectedAddrs.includes(addr)) continue;
-    if (record.lastSeen < cutoff) {
-      peers.delete(addr);
-      pruned++;
-    }
-  }
-  if (pruned > 0) console.log(`[bootstrap] Pruned ${pruned} stale peer(s)`);
-  return pruned;
-}
-
-function getPeersForExchange(limit = 50) {
-  return [...peers.values()]
-    .sort((a, b) => b.lastSeen - a.lastSeen)
-    .slice(0, limit)
-    .map(({ yggAddr, publicKey, alias, version, lastSeen }) => ({
-      yggAddr,
-      publicKey,
-      alias,
-      version,
-      lastSeen,
-    }));
-}
+const rateLimits = new Map(); // agentId -> { count, windowStart }
+const tofuCache = new Map();  // agentId -> publicKey b64
 
 // ---------------------------------------------------------------------------
 // Crypto helpers
 // ---------------------------------------------------------------------------
+
+/** Derive agentId from a base64 Ed25519 public key — matches plugin identity.ts */
+function agentIdFromPublicKey(publicKeyB64) {
+  const pubBytes = Buffer.from(publicKeyB64, "base64");
+  return crypto.createHash("sha256").update(pubBytes).digest("hex").slice(0, 32);
+}
+
 function canonicalize(value) {
   if (Array.isArray(value)) return value.map(canonicalize);
   if (value !== null && typeof value === "object") {
@@ -138,11 +62,124 @@ function verifySignature(publicKeyB64, obj, signatureB64) {
   }
 }
 
-function isYggdrasilAddr(addr) {
-  // Yggdrasil 200::/8 — first byte 0x02, compressed to "2XX:" in IPv6 text
-  const clean = addr.replace(/^::ffff:/, "");
-  return /^2[0-9a-f]{2}:/i.test(clean);
+// ---------------------------------------------------------------------------
+// Peer DB (in-memory + JSON persistence)
+// ---------------------------------------------------------------------------
+const peers = new Map(); // agentId -> PeerRecord
+
+function loadPeers() {
+  const file = path.join(DATA_DIR, "peers.json");
+  if (!fs.existsSync(file)) return;
+  try {
+    const records = JSON.parse(fs.readFileSync(file, "utf8"));
+    for (const r of records) {
+      // Migrate legacy records that used yggAddr as key
+      const id = r.agentId ?? (r.publicKey ? agentIdFromPublicKey(r.publicKey) : null);
+      if (!id) continue;
+      peers.set(id, { ...r, agentId: id });
+    }
+    console.log(`[bootstrap] Loaded ${peers.size} peers from disk`);
+  } catch (e) {
+    console.warn("[bootstrap] Could not load peers.json:", e.message);
+  }
 }
+
+function savePeers() {
+  const file = path.join(DATA_DIR, "peers.json");
+  try {
+    fs.writeFileSync(file, JSON.stringify([...peers.values()], null, 2));
+  } catch (e) {
+    console.warn("[bootstrap] Could not save peers.json:", e.message);
+  }
+}
+
+/**
+ * Upsert a peer record.
+ * opts.lastSeen: if provided (gossip path), preserve provenance — only advance if newer.
+ */
+function upsertPeer(agentId, publicKey, opts = {}) {
+  const now = Date.now();
+  const existing = peers.get(agentId);
+  let lastSeen;
+  if (opts.lastSeen !== undefined) {
+    lastSeen = Math.max(existing?.lastSeen ?? 0, opts.lastSeen);
+  } else {
+    lastSeen = now;
+  }
+  peers.set(agentId, {
+    agentId,
+    publicKey,
+    alias: opts.alias ?? existing?.alias ?? "",
+    version: opts.version ?? existing?.version,
+    endpoints: opts.endpoints ?? existing?.endpoints ?? [],
+    firstSeen: existing?.firstSeen ?? now,
+    lastSeen,
+    source: opts.source ?? "gossip",
+    discoveredVia: opts.discoveredVia ?? existing?.discoveredVia,
+  });
+  if (peers.size > MAX_PEERS) {
+    const sorted = [...peers.values()].sort((a, b) => a.lastSeen - b.lastSeen);
+    peers.delete(sorted[0].agentId);
+  }
+}
+
+function pruneStale(maxAgeMs, protectedIds = []) {
+  const cutoff = Date.now() - maxAgeMs;
+  let pruned = 0;
+  for (const [id, record] of peers) {
+    if (protectedIds.includes(id)) continue;
+    if (record.lastSeen < cutoff) {
+      peers.delete(id);
+      pruned++;
+    }
+  }
+  if (pruned > 0) console.log(`[bootstrap] Pruned ${pruned} stale peer(s)`);
+  return pruned;
+}
+
+function getPeersForExchange(limit = 50) {
+  return [...peers.values()]
+    .sort((a, b) => b.lastSeen - a.lastSeen)
+    .slice(0, limit)
+    .map(({ agentId, publicKey, alias, version, endpoints, lastSeen }) => ({
+      agentId,
+      publicKey,
+      alias,
+      version,
+      endpoints: endpoints ?? [],
+      lastSeen,
+    }));
+}
+
+// ---------------------------------------------------------------------------
+// Bootstrap identity
+// ---------------------------------------------------------------------------
+fs.mkdirSync(DATA_DIR, { recursive: true });
+
+const idFile = path.join(DATA_DIR, "bootstrap-identity.json");
+let selfKeypair;
+if (fs.existsSync(idFile)) {
+  const saved = JSON.parse(fs.readFileSync(idFile, "utf8"));
+  selfKeypair = nacl.sign.keyPair.fromSeed(Buffer.from(saved.seed, "base64"));
+} else {
+  const seed = nacl.randomBytes(32);
+  selfKeypair = nacl.sign.keyPair.fromSeed(seed);
+  fs.writeFileSync(idFile, JSON.stringify({
+    seed: Buffer.from(seed).toString("base64"),
+    publicKey: Buffer.from(selfKeypair.publicKey).toString("base64"),
+  }, null, 2));
+}
+const selfPubB64 = Buffer.from(selfKeypair.publicKey).toString("base64");
+const selfAgentId = agentIdFromPublicKey(selfPubB64);
+let _agentName = process.env.AGENT_NAME ?? `DAP Bootstrap Node (${selfAgentId.slice(0, 8)})`;
+
+// ---------------------------------------------------------------------------
+// Peer DB + pruning
+// ---------------------------------------------------------------------------
+loadPeers();
+setInterval(savePeers, PERSIST_INTERVAL_MS);
+const STALE_TTL_MS = parseInt(process.env.STALE_TTL_MS ?? String(48 * 60 * 60 * 1000));
+setInterval(() => pruneStale(STALE_TTL_MS), 60 * 60 * 1000);
 
 // ---------------------------------------------------------------------------
 // Kimi bot helpers
@@ -163,43 +200,53 @@ async function loadKimiKey() {
   }
 }
 
-function checkRateLimit(addr) {
+function checkRateLimit(agentId) {
   const now = Date.now();
-  const rec = rateLimits.get(addr) ?? { count: 0, windowStart: now };
+  const rec = rateLimits.get(agentId) ?? { count: 0, windowStart: now };
   if (now - rec.windowStart > RATE_LIMIT_WINDOW_MS) {
     rec.count = 0;
     rec.windowStart = now;
   }
   if (rec.count >= RATE_LIMIT_MAX) return false;
   rec.count++;
-  rateLimits.set(addr, rec);
+  rateLimits.set(agentId, rec);
   return true;
 }
 
-const PEER_DEFAULT_PORT = 8099; // standard DAP peer port (recipients may differ from our PORT)
+const PEER_DEFAULT_PORT = 8099;
 
-async function sendMessage(toYggAddr, content, toPort = PEER_DEFAULT_PORT) {
-  if (!_selfYggAddr) return;
-  const payload = {
-    fromYgg: _selfYggAddr,
-    publicKey: selfPubB64,
-    event: "chat",
-    content,
-    timestamp: Date.now(),
-  };
-  const sig = nacl.sign.detached(
-    Buffer.from(JSON.stringify(canonicalize(payload))),
-    selfKeypair.secretKey
-  );
-  const msg = { ...payload, signature: Buffer.from(sig).toString("base64") };
-  try {
-    await fetch(`http://[${toYggAddr}]:${toPort}/peer/message`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(msg),
-      signal: AbortSignal.timeout(10_000),
-    });
-  } catch {}
+async function sendMessageToEndpoints(endpoints, content) {
+  if (!endpoints?.length) return;
+  const sorted = [...endpoints].sort((a, b) => a.priority - b.priority);
+  for (const ep of sorted) {
+    try {
+      const addr = ep.address;
+      const port = ep.port ?? PEER_DEFAULT_PORT;
+      const isIpv6 = addr.includes(":") && !addr.includes(".");
+      const url = isIpv6
+        ? `http://[${addr}]:${port}/peer/message`
+        : `http://${addr}:${port}/peer/message`;
+
+      const payload = {
+        from: selfAgentId,
+        publicKey: selfPubB64,
+        event: "chat",
+        content,
+        timestamp: Date.now(),
+      };
+      const sig = nacl.sign.detached(
+        Buffer.from(JSON.stringify(canonicalize(payload))),
+        selfKeypair.secretKey
+      );
+      await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...payload, signature: Buffer.from(sig).toString("base64") }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      return; // sent successfully via first reachable endpoint
+    } catch {}
+  }
 }
 
 async function callKimi(userMessage) {
@@ -216,7 +263,7 @@ async function callKimi(userMessage) {
         messages: [
           {
             role: "system",
-            content: `You are a friendly AI assistant deployed on the DAP P2P network — an open-source project enabling direct encrypted messaging between AI agents over Yggdrasil IPv6. Your name is "${_agentName ?? "DAP Bootstrap Node"}". You are an always-on node to help new users get started. Keep replies concise (under 150 words). If asked how to find more peers, tell users to run: openclaw p2p discover`,
+            content: `You are a friendly AI assistant deployed on the DAP P2P network — an open-source project enabling direct encrypted messaging between AI agents. Your name is "${_agentName}". You are an always-on node to help new users get started. Keep replies concise (under 150 words). If asked how to find more peers, tell users to run: openclaw p2p discover`,
           },
           { role: "user", content: userMessage },
         ],
@@ -234,36 +281,8 @@ async function callKimi(userMessage) {
 }
 
 // ---------------------------------------------------------------------------
-// Bootstrap identity (must be initialized before server routes are registered)
+// HTTP server
 // ---------------------------------------------------------------------------
-fs.mkdirSync(DATA_DIR, { recursive: true });
-
-const idFile = path.join(DATA_DIR, "bootstrap-identity.json");
-let selfKeypair;
-if (fs.existsSync(idFile)) {
-  const saved = JSON.parse(fs.readFileSync(idFile, "utf8"));
-  selfKeypair = nacl.sign.keyPair.fromSeed(Buffer.from(saved.seed, "base64"));
-} else {
-  const seed = nacl.randomBytes(32);
-  selfKeypair = nacl.sign.keyPair.fromSeed(seed);
-  fs.writeFileSync(idFile, JSON.stringify({
-    seed: Buffer.from(seed).toString("base64"),
-    publicKey: Buffer.from(selfKeypair.publicKey).toString("base64"),
-  }, null, 2));
-}
-const selfPubB64 = Buffer.from(selfKeypair.publicKey).toString("base64");
-let _selfYggAddr = null;
-let _agentName = process.env.AGENT_NAME ?? "DAP Bootstrap Node";
-
-// ---------------------------------------------------------------------------
-// Peer DB + pruning
-// ---------------------------------------------------------------------------
-loadPeers();
-setInterval(savePeers, PERSIST_INTERVAL_MS);
-// Prune peers not directly seen for 48h (protect sibling bootstrap nodes)
-const STALE_TTL_MS = parseInt(process.env.STALE_TTL_MS ?? String(48 * 60 * 60 * 1000));
-setInterval(() => pruneStale(STALE_TTL_MS, FALLBACK_SIBLINGS), 60 * 60 * 1000);
-
 const server = Fastify({ logger: false });
 
 server.get("/peer/ping", async () => ({
@@ -283,53 +302,59 @@ server.post("/peer/announce", async (req, reply) => {
     return reply.code(400).send({ error: "Invalid body" });
   }
 
-  const srcIp = req.socket.remoteAddress ?? "";
-
-  if (!TEST_MODE) {
-    if (!isYggdrasilAddr(srcIp)) {
-      return reply.code(403).send({ error: "Source must be a Yggdrasil address (200::/8)" });
-    }
-    const normalizedSrc = srcIp.replace(/^::ffff:/, "");
-    if (ann.fromYgg !== normalizedSrc) {
-      return reply.code(403).send({
-        error: `fromYgg ${ann.fromYgg} does not match TCP source ${normalizedSrc}`,
-      });
-    }
+  // Support both new `from` field (agentId) and legacy `fromYgg` (transition)
+  const senderId = ann.from ?? ann.fromYgg;
+  if (!senderId) {
+    return reply.code(400).send({ error: "Missing 'from' field" });
   }
 
   const { signature, ...signable } = ann;
   if (!verifySignature(ann.publicKey, signable, signature)) {
     return reply.code(403).send({ error: "Invalid Ed25519 signature" });
   }
-  const sharedPeers = ann.peers;
 
-  upsertPeer(ann.fromYgg, ann.publicKey, {
+  const derivedId = agentIdFromPublicKey(ann.publicKey);
+  if (senderId !== derivedId) {
+    // Allow legacy yggdrasil addresses that don't match the agentId derivation
+    // but still passed signature verification — just use the derived agentId
+    console.warn(`[bootstrap] sender id ${senderId.slice(0,16)}... != derived ${derivedId.slice(0,16)}... — using derived`);
+  }
+
+  const sharedPeers = ann.peers ?? [];
+
+  upsertPeer(derivedId, ann.publicKey, {
     alias: ann.alias,
     version: ann.version,
+    endpoints: ann.endpoints ?? [],
     source: "gossip",
-    discoveredVia: ann.fromYgg,
+    discoveredVia: derivedId,
   });
 
-  for (const p of sharedPeers ?? []) {
-    if (p.yggAddr === ann.fromYgg) continue;
-    upsertPeer(p.yggAddr, p.publicKey, {
+  for (const p of sharedPeers) {
+    const pid = p.agentId ?? (p.yggAddr && p.publicKey ? agentIdFromPublicKey(p.publicKey) : null);
+    if (!pid || pid === derivedId) continue;
+    if (!p.publicKey) continue;
+    upsertPeer(pid, p.publicKey, {
       alias: p.alias,
+      endpoints: p.endpoints ?? [],
       source: "gossip",
-      discoveredVia: ann.fromYgg,
+      discoveredVia: derivedId,
       lastSeen: p.lastSeen,
     });
   }
 
   console.log(
-    `[bootstrap] ↔ ${ann.fromYgg.slice(0, 22)}...  shared=${sharedPeers?.length ?? 0}  total=${peers.size}`
+    `[bootstrap] ↔ ${derivedId.slice(0, 16)}...  shared=${sharedPeers.length}  total=${peers.size}`
   );
 
-  // Include self metadata so clients learn our name/version on first contact
-  const selfYgg = _selfYggAddr;
-  const self = selfYgg
-    ? { yggAddr: selfYgg, publicKey: selfPubB64, alias: _agentName, version: AGENT_VERSION }
-    : undefined;
-  return { ok: true, ...(self ? { self } : {}), peers: getPeersForExchange(50) };
+  const self = {
+    agentId: selfAgentId,
+    publicKey: selfPubB64,
+    alias: _agentName,
+    version: AGENT_VERSION,
+    endpoints: [],
+  };
+  return { ok: true, self, peers: getPeersForExchange(50) };
 });
 
 server.post("/peer/message", async (req, reply) => {
@@ -337,16 +362,10 @@ server.post("/peer/message", async (req, reply) => {
   if (!msg || typeof msg !== "object") {
     return reply.code(400).send({ error: "Invalid body" });
   }
-  const srcIp = req.socket.remoteAddress ?? "";
 
-  if (!TEST_MODE) {
-    if (!isYggdrasilAddr(srcIp)) {
-      return reply.code(403).send({ error: "Source must be a Yggdrasil address (200::/8)" });
-    }
-    const normalizedSrc = srcIp.replace(/^::ffff:/, "");
-    if (msg.fromYgg !== normalizedSrc) {
-      return reply.code(403).send({ error: `fromYgg ${msg.fromYgg} does not match TCP source ${normalizedSrc}` });
-    }
+  const senderId = msg.from ?? msg.fromYgg;
+  if (!senderId) {
+    return reply.code(400).send({ error: "Missing 'from' field" });
   }
 
   const { signature, ...signable } = msg;
@@ -354,186 +373,181 @@ server.post("/peer/message", async (req, reply) => {
     return reply.code(403).send({ error: "Invalid Ed25519 signature" });
   }
 
-  // TOFU
-  const cachedKey = tofuCache.get(msg.fromYgg);
+  const derivedId = agentIdFromPublicKey(msg.publicKey);
+
+  // TOFU: key by derived agentId
+  const cachedKey = tofuCache.get(derivedId);
   if (cachedKey && cachedKey !== msg.publicKey) {
     return reply.code(403).send({ error: "Public key mismatch (TOFU)" });
   }
-  tofuCache.set(msg.fromYgg, msg.publicKey);
+  tofuCache.set(derivedId, msg.publicKey);
 
-  // Signed leave tombstone
   if (msg.event === "leave") {
-    peers.delete(msg.fromYgg);
+    peers.delete(derivedId);
     return { ok: true };
   }
 
-  console.log(`[bootstrap] ← message from=${msg.fromYgg.slice(0, 22)}... event=${msg.event}`);
+  console.log(`[bootstrap] ← message from=${derivedId.slice(0, 16)}... event=${msg.event}`);
 
-  if (!checkRateLimit(msg.fromYgg)) {
+  if (!checkRateLimit(derivedId)) {
     const retryAfterSec = Math.ceil(RATE_LIMIT_WINDOW_MS / 1000);
-    console.log(`[bootstrap] rate-limited ${msg.fromYgg.slice(0, 22)}...`);
+    console.log(`[bootstrap] rate-limited ${derivedId.slice(0, 16)}...`);
     reply.header("Retry-After", String(retryAfterSec));
     return reply.code(429).send({ error: "Rate limit exceeded", retryAfterSec });
   }
 
-  // Accept immediately; Kimi reply is sent async
   reply.send({ ok: true });
 
   const replyText = await callKimi(msg.content);
-  if (replyText) await sendMessage(msg.fromYgg, replyText);
+  if (replyText) {
+    const peer = peers.get(derivedId);
+    if (peer?.endpoints?.length) {
+      await sendMessageToEndpoints(peer.endpoints, replyText);
+    }
+  }
 });
 
 // ---------------------------------------------------------------------------
 // UDP peer registry for QUIC/UDP rendezvous (port 8098)
 // ---------------------------------------------------------------------------
-const udpPeers = new Map() // agentId -> { agentId, publicKey, address, port, lastSeen }
-const UDP_PEER_TTL_MS = 10 * 60 * 1000 // 10 minutes
+const udpPeers = new Map(); // agentId -> { agentId, publicKey, address, port, lastSeen }
+const UDP_PEER_TTL_MS = 10 * 60 * 1000;
 
 function pruneUdpPeers() {
-  const cutoff = Date.now() - UDP_PEER_TTL_MS
+  const cutoff = Date.now() - UDP_PEER_TTL_MS;
   for (const [id, p] of udpPeers) {
-    if (p.lastSeen < cutoff) udpPeers.delete(id)
+    if (p.lastSeen < cutoff) udpPeers.delete(id);
   }
 }
 
 server.get("/peer/udp-peers", async () => {
-  pruneUdpPeers()
+  pruneUdpPeers();
   return {
     peers: Array.from(udpPeers.values()).map(p => ({
       agentId: p.agentId,
       address: p.address,
       port: p.port,
       lastSeen: p.lastSeen,
-    }))
-  }
-})
+    })),
+  };
+});
 
 await loadKimiKey();
 await server.listen({ port: PORT, host: "::" });
 console.log(`[bootstrap] Listening on [::]:${PORT}${TEST_MODE ? " (test mode)" : ""}`);
+console.log(`[bootstrap] Agent ID: ${selfAgentId}`);
 console.log(`[bootstrap] Data dir: ${DATA_DIR}`);
 
 // ---------------------------------------------------------------------------
 // UDP socket for QUIC peer rendezvous (port 8098)
 // ---------------------------------------------------------------------------
-const udpServer = dgram.createSocket('udp6')
+const udpServer = dgram.createSocket("udp6");
 
-udpServer.on('error', (err) => {
-  console.error('[udp] server error:', err.message)
-})
+udpServer.on("error", (err) => {
+  console.error("[udp] server error:", err.message);
+});
 
-udpServer.on('message', (msg, rinfo) => {
-  pruneUdpPeers()
+udpServer.on("message", (msg, rinfo) => {
+  pruneUdpPeers();
 
-  let data
+  let data;
   try {
-    data = JSON.parse(msg.toString('utf-8'))
+    data = JSON.parse(msg.toString("utf-8"));
   } catch {
-    return // ignore malformed
+    return;
   }
 
-  if (!data || !data.agentId || data.type !== 'announce') return
+  if (!data || !data.agentId || data.type !== "announce") return;
 
-  // Record the sender's NAT-mapped public endpoint
-  const senderEndpoint = `${rinfo.address}:${rinfo.port}`
+  const senderEndpoint = `${rinfo.address}:${rinfo.port}`;
   udpPeers.set(data.agentId, {
     agentId: data.agentId,
-    publicKey: data.publicKey ?? '',
+    publicKey: data.publicKey ?? "",
     address: rinfo.address,
     port: rinfo.port,
     lastSeen: Date.now(),
-  })
+  });
 
-  // Reply with current peer list + their observed endpoint
   const peerList = Array.from(udpPeers.values())
     .filter(p => p.agentId !== data.agentId)
     .slice(0, 20)
-    .map(p => ({ agentId: p.agentId, address: p.address, port: p.port }))
+    .map(p => ({ agentId: p.agentId, address: p.address, port: p.port }));
 
   const reply = Buffer.from(JSON.stringify({
     ok: true,
     yourEndpoint: senderEndpoint,
     peers: peerList,
-  }))
+  }));
 
   udpServer.send(reply, rinfo.port, rinfo.address, (err) => {
-    if (err) console.warn('[udp] reply error:', err.message)
-  })
+    if (err) console.warn("[udp] reply error:", err.message);
+  });
 
-  console.log(`[udp] announce from ${senderEndpoint} agentId=${data.agentId.slice(0, 16)}...`)
-})
+  console.log(`[udp] announce from ${senderEndpoint} agentId=${data.agentId.slice(0, 16)}...`);
+});
 
-udpServer.bind(8098, '::', () => {
-  console.log('[udp] Listening on [::]:8098')
-})
+udpServer.bind(8098, "::", () => {
+  console.log("[udp] Listening on [::]:8098");
+});
 
 // ---------------------------------------------------------------------------
-// Periodic sync with sibling bootstrap nodes
+// Periodic sync with sibling bootstrap nodes (pull model via bootstrap.json)
 // ---------------------------------------------------------------------------
 const BOOTSTRAP_JSON_URL =
   "https://resciencelab.github.io/DAP/bootstrap.json";
 const SYNC_INTERVAL_MS = parseInt(process.env.SYNC_INTERVAL_MS ?? String(5 * 60 * 1000));
 
-async function getSelfYggAddr() {
-  try {
-    const { execSync } = await import("child_process");
-    const out = execSync("yggdrasilctl getSelf 2>/dev/null", { encoding: "utf8" });
-    const m = out.match(/IPv6 address[^│]*│\s*(\S+)/);
-    return m ? m[1].trim() : null;
-  } catch { return null; }
-}
-
-const FALLBACK_SIBLINGS = [
-  "200:697f:bda:1e8e:706a:6c5e:630b:51d",
-  "200:e1a5:b063:958:8f74:ec45:8eb0:e30e",
-  "200:9cf6:eaf1:7d3e:14b0:5869:2140:b618",
-  "202:adbc:dde1:e272:1cdb:97d0:8756:4f77",
-  "200:5ec6:62dd:9e91:3752:820c:98f5:5863",
-];
-
-async function fetchSiblingAddrs() {
+async function fetchSiblingEndpoints() {
   try {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 10_000);
     const resp = await fetch(BOOTSTRAP_JSON_URL, { signal: ctrl.signal });
     clearTimeout(timer);
-    if (!resp.ok) return FALLBACK_SIBLINGS;
+    if (!resp.ok) return [];
     const data = await resp.json();
-    const addrs = (data.bootstrap_nodes ?? []).map((n) => n.yggAddr);
-    return addrs.length > 0 ? addrs : FALLBACK_SIBLINGS;
-  } catch { return FALLBACK_SIBLINGS; }
+    return (data.bootstrap_nodes ?? [])
+      .filter((n) => n.addr)
+      .map((n) => ({ addr: n.addr, port: n.httpPort ?? n.port ?? 8099 }));
+  } catch {
+    return [];
+  }
 }
 
 async function syncWithSiblings() {
-  const selfAddr = await getSelfYggAddr();
-  if (!selfAddr) {
-    console.warn("[bootstrap:sync] Could not determine own Yggdrasil address — skipping");
+  const siblings = await fetchSiblingEndpoints();
+  if (siblings.length === 0) {
+    console.log("[bootstrap:sync] No sibling endpoints in bootstrap.json — skipping");
     return;
   }
-  // Cache self Ygg address; refine agent name with actual address once known
-  _selfYggAddr = selfAddr;
-  if (!process.env.AGENT_NAME) _agentName = `ReScience Lab's bootstrap-${selfAddr.slice(0, 12)}`;
-
-  const siblings = (await fetchSiblingAddrs()).filter((a) => a !== selfAddr);
-  if (siblings.length === 0) return;
 
   const myPeers = getPeersForExchange(50);
   const signable = {
-    fromYgg: selfAddr,
+    from: selfAgentId,
     publicKey: selfPubB64,
     alias: _agentName,
     version: AGENT_VERSION,
     timestamp: Date.now(),
+    endpoints: [],
     peers: myPeers,
   };
-  const msg = Buffer.from(JSON.stringify(canonicalize(signable)));
-  const sig = nacl.sign.detached(msg, selfKeypair.secretKey);
+  const sig = nacl.sign.detached(
+    Buffer.from(JSON.stringify(canonicalize(signable))),
+    selfKeypair.secretKey
+  );
   const announcement = { ...signable, signature: Buffer.from(sig).toString("base64") };
 
   let ok = 0;
-  for (const addr of siblings) {
+  for (const { addr, port } of siblings) {
+    const isIpv6 = addr.includes(":") && !addr.includes(".");
+    const url = isIpv6
+      ? `http://[${addr}]:${port}/peer/announce`
+      : `http://${addr}:${port}/peer/announce`;
+
+    // Skip ourselves
+    if (addr === process.env.PUBLIC_ADDR) continue;
+
     try {
-      const res = await fetch(`http://[${addr}]:${PORT}/peer/announce`, {
+      const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(announcement),
@@ -541,21 +555,23 @@ async function syncWithSiblings() {
       });
       if (res.ok) {
         const body = await res.json();
-        if (body.self?.yggAddr && body.self?.publicKey) {
-          upsertPeer(body.self.yggAddr, body.self.publicKey, {
+        if (body.self?.agentId && body.self?.publicKey) {
+          upsertPeer(body.self.agentId, body.self.publicKey, {
             alias: body.self.alias,
             version: body.self.version,
+            endpoints: body.self.endpoints ?? [],
             source: "gossip",
-            discoveredVia: body.self.yggAddr,
+            discoveredVia: body.self.agentId,
           });
         }
         for (const p of body.peers ?? []) {
-          if (p.yggAddr === selfAddr) continue;
-          upsertPeer(p.yggAddr, p.publicKey, {
+          if (!p.agentId || p.agentId === selfAgentId) continue;
+          upsertPeer(p.agentId, p.publicKey, {
             alias: p.alias,
             version: p.version,
+            endpoints: p.endpoints ?? [],
             source: "gossip",
-            discoveredVia: addr,
+            discoveredVia: body.self?.agentId,
             lastSeen: p.lastSeen,
           });
         }
@@ -566,7 +582,7 @@ async function syncWithSiblings() {
   console.log(`[bootstrap:sync] Synced with ${ok}/${siblings.length} siblings — total peers: ${peers.size}`);
 }
 
-// Initial sync after 30s (let Yggdrasil routes converge), then every SYNC_INTERVAL_MS
-setTimeout(syncWithSiblings, 30_000);
+// Initial sync after 10s, then every SYNC_INTERVAL_MS
+setTimeout(syncWithSiblings, 10_000);
 setInterval(syncWithSiblings, SYNC_INTERVAL_MS);
 console.log(`[bootstrap] Sibling sync enabled (interval: ${SYNC_INTERVAL_MS / 1000}s)`);

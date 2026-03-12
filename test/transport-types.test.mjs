@@ -12,7 +12,7 @@ describe("v2 PeerAnnouncement format", () => {
       signature: "sig",
       endpoints: [
         { transport: "quic", address: "1.2.3.4", port: 8098, priority: 10, ttl: 3600 },
-        { transport: "yggdrasil", address: "200::1", port: 8099, priority: 1, ttl: 86400 },
+        { transport: "tcp", address: "10.0.0.1", port: 8099, priority: 1, ttl: 86400 },
       ],
       peers: [
         {
@@ -50,7 +50,6 @@ describe("v2 PeerAnnouncement format", () => {
       agent_name: "test",
       peer_port: 8099,
       quic_port: 8098,
-      test_mode: "auto",
     }
     assert.equal(config.quic_port, 8098)
   })

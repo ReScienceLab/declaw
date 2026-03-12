@@ -1,5 +1,5 @@
 /**
- * UDP transport backend — zero-install fallback when Yggdrasil is unavailable.
+ * UDP transport backend — optional fast transport alongside the primary HTTP/TCP layer.
  *
  * IMPORTANT: This is a plain UDP datagram transport, NOT a real QUIC
  * implementation. It provides:

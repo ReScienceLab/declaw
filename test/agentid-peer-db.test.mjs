@@ -158,13 +158,13 @@ describe("peer-db (agentId-keyed)", () => {
     const id = generateIdentity()
     upsertDiscoveredPeer(id.agentId, id.publicKey, {
       endpoints: [
-        { transport: "yggdrasil", address: "200::1", port: 8099, priority: 1, ttl: 86400 },
+        { transport: "tcp", address: "10.0.0.1", port: 8099, priority: 1, ttl: 86400 },
         { transport: "quic", address: "1.2.3.4", port: 8098, priority: 10, ttl: 3600 },
       ],
     })
     const peer = getPeer(id.agentId)
-    assert.equal(getEndpointAddress(peer, "yggdrasil"), "200::1")
+    assert.equal(getEndpointAddress(peer, "tcp"), "10.0.0.1")
     assert.equal(getEndpointAddress(peer, "quic"), "1.2.3.4")
-    assert.equal(getEndpointAddress(peer, "tcp"), null)
+    assert.equal(getEndpointAddress(peer, "tailscale"), null)
   })
 })
