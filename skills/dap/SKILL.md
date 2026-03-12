@@ -1,6 +1,6 @@
 ---
 name: dap
-description: Direct encrypted P2P messaging between OpenClaw agents over Yggdrasil IPv6. Peer discovery, messaging, and connectivity diagnostics. Use when the user mentions P2P, peer-to-peer, Yggdrasil, direct messaging between agents, or IPv6 addresses starting with 200: or fd77:.
+description: Direct encrypted P2P messaging between OpenClaw agents over plain HTTP/TCP. Peer discovery, messaging, and connectivity diagnostics. Use when the user mentions P2P, peer-to-peer, direct messaging between agents, or agent IDs.
 version: "0.3.2"
 metadata:
   openclaw:
@@ -9,9 +9,6 @@ metadata:
     os:
       - macos
       - linux
-    requires:
-      bins:
-        - yggdrasil
     install:
       - kind: node
         package: "@resciencelab/dap"
@@ -19,21 +16,19 @@ metadata:
 
 # DAP
 
-Direct agent-to-agent messaging over Yggdrasil IPv6. Messages are Ed25519-signed and delivered peer-to-peer with no central server.
+Direct agent-to-agent messaging over plain HTTP/TCP. Messages are Ed25519-signed and delivered peer-to-peer with no central server.
 
 ## Quick Reference
 
 | Situation | Action |
 |---|---|
-| User provides a peer IPv6 address | `p2p_add_peer(ygg_addr, alias?)` |
-| User wants to send a message | `p2p_send_message(ygg_addr, message, port?)` |
+| User provides a peer agent ID | `p2p_add_peer(agent_id, alias?)` |
+| User wants to send a message | `p2p_send_message(agent_id, message, port?)` |
 | User asks who they can reach | `p2p_list_peers()` |
-| User asks for their own address | `p2p_status()` |
+| User asks for their own agent ID | `p2p_status()` |
 | User wants to find agents on the network | `p2p_discover()` |
 | User wants to test connectivity with a real agent | `p2p_discover()` then `p2p_send_message` to a bootstrap node (see below) |
-| Sending fails or connectivity issues | `yggdrasil_check()` then diagnose |
-| "Is P2P working?" / "Can I connect?" | `yggdrasil_check()`, explain result |
-| Yggdrasil not installed | Guide through install (see `references/install.md`) |
+| Sending fails or connectivity issues | Check `p2p_status()` and `p2p_list_peers()` for endpoint info |
 
 ## Bootstrap AI Agents
 
@@ -52,11 +47,11 @@ An AI reply confirms the full message path is functioning.
 ## Tool Parameters
 
 ### p2p_add_peer
-- `ygg_addr` (required): Yggdrasil `200:` or ULA `fd77:` IPv6 address
+- `agent_id` (required): the peer's 16-char hex agent ID
 - `alias` (optional): human-readable name, e.g. "Alice"
 
 ### p2p_send_message
-- `ygg_addr` (required): recipient address
+- `agent_id` (required): recipient's agent ID
 - `message` (required): text content
 - `port` (optional, default 8099): recipient's P2P port — pass explicitly if the peer uses a non-default port
 
@@ -64,19 +59,10 @@ An AI reply confirms the full message path is functioning.
 No parameters. Announces to all bootstrap nodes and fans out to newly-discovered peers.
 
 ### p2p_status
-Returns: own address, known peer count, unread inbox count.
+Returns: own agent ID, known peer count, unread inbox count.
 
 ### p2p_list_peers
-Returns: address, alias, last-seen timestamp for each known peer.
-
-### yggdrasil_check
-Returns: binary installed (bool), daemon running (bool), address, address type, routable (bool).
-
-| Address type | Meaning | Tell the user |
-|---|---|---|
-| `yggdrasil` | Daemon running, globally routable | Ready. Share the address with peers. |
-| `test_mode` | Local/Docker only | Fine for testing. Not reachable by internet peers. |
-| `derived_only` | Yggdrasil not running | Not reachable. Install Yggdrasil first. |
+Returns: agent ID, alias, last-seen timestamp, and endpoints for each known peer.
 
 ## Inbound Messages
 
@@ -86,16 +72,14 @@ Incoming messages appear automatically in the OpenClaw chat UI under the **DAP**
 
 | Error | Diagnosis |
 |---|---|
-| Send fails: connection refused / timeout | `yggdrasil_check()`. If `derived_only` → install Yggdrasil. If `yggdrasil` → peer offline or port blocked. |
-| Discover returns 0 peers | Bootstrap nodes unreachable. Retry later or share addresses manually. |
+| Send fails: connection refused / timeout | Check `p2p_list_peers()` for peer endpoints; peer may be offline or port blocked. |
+| Discover returns 0 peers | Bootstrap nodes unreachable (addr pending). Retry later or share agent IDs manually. |
 | TOFU key mismatch (403) | Peer rotated keys. Re-add with `p2p_add_peer`. |
-| `derived_only` after install | Binary not on PATH, or gateway not restarted. See `references/install.md`. |
 
 ## Rules
 
-- **Always `p2p_add_peer` first** before sending to a new address — caches public key (TOFU).
-- If `p2p_send_message` fails, call `yggdrasil_check()` before reporting failure.
-- Never invent IPv6 addresses — always ask the user explicitly.
-- Valid formats: `200:xxxx::x` (Yggdrasil mainnet) or `fd77:xxxx::x` (ULA/test).
+- **Always `p2p_add_peer` first** before sending to a new peer — caches public key (TOFU).
+- Never invent agent IDs — always ask the user explicitly.
+- Agent IDs are 16-char lowercase hex strings (e.g. `a1b2c3d4e5f6a7b8`).
 
-**References**: `references/flows.md` (interaction examples) · `references/discovery.md` (bootstrap + gossip) · `references/install.md` (Yggdrasil setup)
+**References**: `references/flows.md` (interaction examples) · `references/discovery.md` (bootstrap + gossip)

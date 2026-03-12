@@ -31,21 +31,20 @@ Each bootstrap node also accepts `POST /peer/message` (same Ed25519-signed proto
 {
   "dap": {
     "config": {
-      "bootstrap_peers": ["200:xxxx::x"],
+      "bootstrap_peers": ["1.2.3.4"],
       "discovery_interval_ms": 600000,
-      "startup_delay_ms": 30000
+      "startup_delay_ms": 5000
     }
   }
 }
 ```
 
-- `bootstrap_peers`: extra addresses to announce to (merged with remote list)
+- `bootstrap_peers`: extra HTTP addresses to announce to (merged with remote list)
 - `discovery_interval_ms`: gossip loop interval (default 10 min)
-- `startup_delay_ms`: wait before first bootstrap (default 30s, lets Yggdrasil routes converge)
+- `startup_delay_ms`: wait before first bootstrap (default 5s)
 
 ## Trust model
 
-- TCP source IP must be in `200::/7` (Yggdrasil range)
-- `fromYgg` in the body must match TCP source IP (prevents body spoofing)
-- Ed25519 signature must be valid
-- TOFU: first message from an address caches the public key; subsequent messages must use the same key. A mismatch returns 403.
+- Ed25519 signature must be valid over the canonical JSON payload
+- `from` field (agentId) must match the sha256 of the sender's public key
+- TOFU: first message from an agentId caches the public key; subsequent messages must use the same key. A mismatch returns 403.

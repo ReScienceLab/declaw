@@ -11,23 +11,23 @@ User: "Find other agents I can talk to"
 → Show the list so user can pick someone to message.
 ```
 
-## Flow 2 — User gives a new peer address and asks to send
+## Flow 2 — User gives a new peer agent ID and asks to send
 
 ```
-User: "Alice's agent is at 200:abc:def::1 — send her 'hello'"
+User: "Alice's agent ID is a1b2c3d4e5f6a7b8 — send her 'hello'"
 
-1. p2p_add_peer(ygg_addr="200:abc:def::1", alias="Alice")
-2. p2p_send_message(ygg_addr="200:abc:def::1", message="hello")
-→ "Message delivered to Alice (200:abc:def::1)"
+1. p2p_add_peer(agent_id="a1b2c3d4e5f6a7b8", alias="Alice")
+2. p2p_send_message(agent_id="a1b2c3d4e5f6a7b8", message="hello")
+→ "Message delivered to Alice (a1b2c3d4e5f6a7b8)"
 ```
 
-## Flow 3 — User wants to share their own address
+## Flow 3 — User wants to share their own agent ID
 
 ```
-User: "What is my agent's P2P address?"
+User: "What is my agent's ID?"
 
 1. p2p_status()
-→ "Your agent's P2P address is 200:1234::a. Share this with others."
+→ "Your agent ID is a1b2c3d4e5f6a7b8. Share this with others."
 ```
 
 ## Flow 4 — User references a peer by alias
@@ -35,36 +35,33 @@ User: "What is my agent's P2P address?"
 ```
 User: "Send 'ready' to Bob"
 
-1. p2p_list_peers()          ← find Bob's address by alias
-2. p2p_send_message(ygg_addr=<bob's addr>, message="ready")
+1. p2p_list_peers()          ← find Bob's agent_id by alias
+2. p2p_send_message(agent_id=<bob's agent_id>, message="ready")
 → "Message sent to Bob."
 ```
 
 ## Flow 5 — Delivery fails (with diagnosis)
 
 ```
-User: "Send 'hello' to 200:ffff::c"
+User: "Send 'hello' to a1b2c3d4e5f6a7b8"
 
-1. p2p_add_peer(ygg_addr="200:ffff::c")
-2. p2p_send_message(ygg_addr="200:ffff::c", message="hello")
-   → error: connection refused
+1. p2p_add_peer(agent_id="a1b2c3d4e5f6a7b8")
+2. p2p_send_message(agent_id="a1b2c3d4e5f6a7b8", message="hello")
+   → error: no reachable endpoint
 
-3. yggdrasil_check()    ← diagnose before reporting
-   → yggdrasil running, address is routable
-
-→ "Could not reach 200:ffff::c — the peer's agent may be
-   offline or their port 8099 is blocked. Our Yggdrasil
-   connection is healthy."
+→ "Could not reach a1b2c3d4e5f6a7b8 — the peer's agent may be
+   offline or no reachable endpoint is known. Try p2p_discover()
+   to refresh endpoint info."
 ```
 
 ## Flow 6 — Peer uses non-default port
 
 ```
-User: "Send 'ping' to 200:abc::1 on port 9001"
+User: "Send 'ping' to a1b2c3d4e5f6a7b8 on port 9001"
 
-1. p2p_add_peer(ygg_addr="200:abc::1")
-2. p2p_send_message(ygg_addr="200:abc::1", message="ping", port=9001)
-→ "Message delivered to 200:abc::1"
+1. p2p_add_peer(agent_id="a1b2c3d4e5f6a7b8")
+2. p2p_send_message(agent_id="a1b2c3d4e5f6a7b8", message="ping", port=9001)
+→ "Message delivered to a1b2c3d4e5f6a7b8"
 ```
 
 ## Flow 7 — First-time user
@@ -72,12 +69,9 @@ User: "Send 'ping' to 200:abc::1 on port 9001"
 ```
 User: "How do I use P2P?"
 
-1. yggdrasil_check()
-   → derived_only (Yggdrasil not running)
-
-→ "You need Yggdrasil installed for P2P to work. It gives your
-   agent a globally-routable IPv6 address."
-   (Guide through install — see yggdrasil-setup skill)
+→ "DAP works out of the box — no extra software needed.
+   Run p2p_discover() to find peers, then p2p_send_message()
+   to chat directly with any agent on the network."
 ```
 
 ## Flow 8 — Discovery returns nothing
