@@ -21,6 +21,7 @@ import { UDPTransport } from "./transport-quic"
 const DAP_TOOLS = [
   "p2p_add_peer", "p2p_discover", "p2p_list_peers",
   "p2p_send_message", "p2p_status",
+  "list_worlds", "join_world",
 ]
 
 function ensureToolsAllowed(config: any): void {
@@ -506,6 +507,58 @@ export default function register(api: any) {
       const found = await bootstrapDiscovery(identity, peerPort, bootstrapPeers, _agentMeta)
       const total = listPeers().length
       return { content: [{ type: "text", text: `Discovery complete — ${found} new peer(s) found. Known peers: ${total}` }] }
+    },
+  })
+
+  api.registerTool({
+    name: "list_worlds",
+    description: "List all Agent worlds currently active on the DAP network.",
+    parameters: { type: "object", properties: {}, required: [] },
+    async execute(_id: string, _params: Record<string, never>) {
+      const worlds = findPeersByCapability("world:")
+      if (!worlds.length) {
+        return { content: [{ type: "text", text: "No worlds found on the DAP network yet. Try running p2p_discover first." }] }
+      }
+      const lines = worlds.map((p) => {
+        const cap = p.capabilities?.find((c) => c.startsWith("world:")) ?? ""
+        const worldId = cap.slice("world:".length)
+        const ago = Math.round((Date.now() - p.lastSeen) / 1000)
+        const reachable = p.endpoints?.length ? "reachable" : "no endpoint"
+        return `world:${worldId} — ${p.alias || worldId} [${reachable}] — last seen ${ago}s ago`
+      })
+      return { content: [{ type: "text", text: `Found ${worlds.length} world(s):\n${lines.join("\n")}` }] }
+    },
+  })
+
+  api.registerTool({
+    name: "join_world",
+    description: "Join an Agent world on the DAP network. Sends a world.join message to the World Agent.",
+    parameters: {
+      type: "object",
+      properties: {
+        world_id: { type: "string", description: "The world ID to join (e.g. 'pixel-city')" },
+        alias: { type: "string", description: "Optional display name inside the world" },
+      },
+      required: ["world_id"],
+    },
+    async execute(_id: string, params: { world_id: string; alias?: string }) {
+      if (!identity) {
+        return { content: [{ type: "text", text: "P2P service not started." }] }
+      }
+      const worlds = findPeersByCapability(`world:${params.world_id}`)
+      if (!worlds.length) {
+        return { content: [{ type: "text", text: `World '${params.world_id}' not found. Run list_worlds to see available worlds.` }] }
+      }
+      const world = worlds[0]
+      if (!world.endpoints?.length) {
+        return { content: [{ type: "text", text: `World '${params.world_id}' has no reachable endpoints.` }] }
+      }
+      const content = JSON.stringify({ alias: params.alias ?? _agentMeta.name ?? identity.agentId.slice(0, 8) })
+      const result = await sendP2PMessage(identity, world.agentId, "world.join", content, world.endpoints[0].port ?? peerPort, 10_000, buildSendOpts(world.agentId))
+      if (result.ok) {
+        return { content: [{ type: "text", text: `Joined world '${params.world_id}' (agent: ${world.agentId.slice(0, 12)}...)` }] }
+      }
+      return { content: [{ type: "text", text: `Failed to join world: ${result.error}` }], isError: true }
     },
   })
 }
