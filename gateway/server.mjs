@@ -1,0 +1,436 @@
+/**
+ * DAP Gateway — stateless portal + WebSocket bridge.
+ * No OpenClaw dependency. Runs on plain HTTP/TCP.
+ *
+ * HTTP Endpoints:
+ *   GET  /health          — health check
+ *   GET  /worlds          — list discovered world:* peers on DAP network
+ *   GET  /agents          — list all known DAP peers
+ *   GET  /world/:worldId  — info about a specific world
+ *
+ * WebSocket:
+ *   WS   /ws?world=<worldId>  — subscribe to a world's real-time events
+ *       Client → server: { type: "action", action: "move", x, y }
+ *                        { type: "join", alias: "..." }
+ *                        { type: "leave" }
+ *       Server → client: { type: "world.state", ... }
+ *                        { type: "error", message: "..." }
+ *
+ * Env:
+ *   PEER_PORT         — DAP peer HTTP port (default 8099)
+ *   HTTP_PORT         — gateway public HTTP port (default 8100)
+ *   PUBLIC_ADDR       — own public IP/hostname for DAP announce
+ *   DATA_DIR          — identity persistence (default /data)
+ *   BOOTSTRAP_URL     — bootstrap node list (default GitHub Pages)
+ *   DISCOVERY_INTERVAL_MS — how often to re-discover worlds (default 60000)
+ */
+import Fastify from "fastify";
+import websocketPlugin from "@fastify/websocket";
+import cors from "@fastify/cors";
+import nacl from "tweetnacl";
+import fs from "fs";
+import path from "path";
+import crypto from "node:crypto";
+
+const PEER_PORT = parseInt(process.env.PEER_PORT ?? "8099");
+const HTTP_PORT = parseInt(process.env.HTTP_PORT ?? "8100");
+const PUBLIC_ADDR = process.env.PUBLIC_ADDR ?? null;
+const DATA_DIR = process.env.DATA_DIR ?? "/data";
+const BOOTSTRAP_URL = process.env.BOOTSTRAP_URL ?? "https://resciencelab.github.io/DAP/bootstrap.json";
+const DISCOVERY_INTERVAL_MS = parseInt(process.env.DISCOVERY_INTERVAL_MS ?? "60000");
+const MAX_PEERS = 500;
+
+// ---------------------------------------------------------------------------
+// Crypto helpers
+// ---------------------------------------------------------------------------
+
+function agentIdFromPublicKey(publicKeyB64) {
+  return crypto.createHash("sha256").update(Buffer.from(publicKeyB64, "base64")).digest("hex").slice(0, 32);
+}
+
+function canonicalize(value) {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (value !== null && typeof value === "object") {
+    const sorted = {};
+    for (const k of Object.keys(value).sort()) sorted[k] = canonicalize(value[k]);
+    return sorted;
+  }
+  return value;
+}
+
+function verifySignature(publicKeyB64, obj, signatureB64) {
+  try {
+    const pubKey = Buffer.from(publicKeyB64, "base64");
+    const sig = Buffer.from(signatureB64, "base64");
+    const msg = Buffer.from(JSON.stringify(canonicalize(obj)));
+    return nacl.sign.detached.verify(msg, sig, pubKey);
+  } catch { return false; }
+}
+
+function signPayload(payload, secretKey) {
+  const sig = nacl.sign.detached(Buffer.from(JSON.stringify(canonicalize(payload))), secretKey);
+  return Buffer.from(sig).toString("base64");
+}
+
+// ---------------------------------------------------------------------------
+// Identity
+// ---------------------------------------------------------------------------
+fs.mkdirSync(DATA_DIR, { recursive: true });
+
+const idFile = path.join(DATA_DIR, "gateway-identity.json");
+let selfKeypair;
+if (fs.existsSync(idFile)) {
+  const saved = JSON.parse(fs.readFileSync(idFile, "utf8"));
+  selfKeypair = nacl.sign.keyPair.fromSeed(Buffer.from(saved.seed, "base64"));
+} else {
+  const seed = nacl.randomBytes(32);
+  selfKeypair = nacl.sign.keyPair.fromSeed(seed);
+  fs.writeFileSync(idFile, JSON.stringify({
+    seed: Buffer.from(seed).toString("base64"),
+    publicKey: Buffer.from(selfKeypair.publicKey).toString("base64"),
+  }, null, 2));
+}
+const selfPubB64 = Buffer.from(selfKeypair.publicKey).toString("base64");
+const selfAgentId = agentIdFromPublicKey(selfPubB64);
+
+console.log(`[gateway] agentId=${selfAgentId}`);
+
+// ---------------------------------------------------------------------------
+// Peer DB
+// ---------------------------------------------------------------------------
+const peers = new Map(); // agentId -> PeerRecord
+
+function upsertPeer(agentId, publicKey, opts = {}) {
+  const now = Date.now();
+  const existing = peers.get(agentId);
+  peers.set(agentId, {
+    agentId,
+    publicKey: publicKey || existing?.publicKey || "",
+    alias: opts.alias ?? existing?.alias ?? "",
+    endpoints: opts.endpoints ?? existing?.endpoints ?? [],
+    capabilities: opts.capabilities ?? existing?.capabilities ?? [],
+    lastSeen: now,
+  });
+  if (peers.size > MAX_PEERS) {
+    const oldest = [...peers.values()].sort((a, b) => a.lastSeen - b.lastSeen)[0];
+    peers.delete(oldest.agentId);
+  }
+}
+
+function getPeersForExchange(limit = 50) {
+  return [...peers.values()]
+    .sort((a, b) => b.lastSeen - a.lastSeen)
+    .slice(0, limit)
+    .map(({ agentId, publicKey, alias, endpoints, capabilities, lastSeen }) => ({
+      agentId, publicKey, alias, endpoints: endpoints ?? [], capabilities: capabilities ?? [], lastSeen,
+    }));
+}
+
+function findByCapability(cap) {
+  const isPrefix = cap.endsWith(":");
+  return [...peers.values()].filter((p) =>
+    p.capabilities?.some((c) => isPrefix ? c.startsWith(cap) : c === cap)
+  ).sort((a, b) => b.lastSeen - a.lastSeen);
+}
+
+// ---------------------------------------------------------------------------
+// WebSocket subscriptions: worldId -> Set<WebSocket>
+// ---------------------------------------------------------------------------
+const worldSubs = new Map(); // worldId -> Set<ws>
+// browser session agentIds: sessionId -> { agentId, publicKey, secretKey, alias, worldId }
+const sessions = new Map();
+
+function broadcast(worldId, data) {
+  const subs = worldSubs.get(worldId);
+  if (!subs) return;
+  const msg = JSON.stringify(data);
+  for (const ws of subs) {
+    try { ws.send(msg); } catch {}
+  }
+}
+
+function subscribe(worldId, ws) {
+  if (!worldSubs.has(worldId)) worldSubs.set(worldId, new Set());
+  worldSubs.get(worldId).add(ws);
+}
+
+function unsubscribe(worldId, ws) {
+  worldSubs.get(worldId)?.delete(ws);
+  if (worldSubs.get(worldId)?.size === 0) worldSubs.delete(worldId);
+}
+
+// ---------------------------------------------------------------------------
+// Outbound DAP messaging (gateway → world agent)
+// ---------------------------------------------------------------------------
+
+async function sendToWorld(worldId, event, content) {
+  const world = findByCapability(`world:${worldId}`)[0];
+  if (!world?.endpoints?.length) {
+    console.warn(`[gateway] No reachable endpoints for world:${worldId}`);
+    return { ok: false, error: "World agent not reachable" };
+  }
+  const sorted = [...world.endpoints].sort((a, b) => a.priority - b.priority);
+  const payload = {
+    from: selfAgentId,
+    publicKey: selfPubB64,
+    event,
+    content: typeof content === "string" ? content : JSON.stringify(content),
+    timestamp: Date.now(),
+  };
+  payload.signature = signPayload(payload, selfKeypair.secretKey);
+
+  for (const ep of sorted) {
+    try {
+      const addr = ep.address;
+      const port = ep.port ?? PEER_PORT;
+      const isIpv6 = addr.includes(":") && !addr.includes(".");
+      const url = isIpv6 ? `http://[${addr}]:${port}/peer/message` : `http://${addr}:${port}/peer/message`;
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(8_000),
+      });
+      const data = await resp.json();
+      return { ok: resp.ok, ...data };
+    } catch {}
+  }
+  return { ok: false, error: "All world agent endpoints unreachable" };
+}
+
+// ---------------------------------------------------------------------------
+// Bootstrap discovery
+// ---------------------------------------------------------------------------
+
+async function fetchBootstrapNodes() {
+  try {
+    const resp = await fetch(BOOTSTRAP_URL, { signal: AbortSignal.timeout(10_000) });
+    if (!resp.ok) return [];
+    const data = await resp.json();
+    return (data.bootstrap_nodes ?? []).filter((n) => n.addr).map((n) => ({
+      addr: n.addr, httpPort: n.httpPort ?? 8099,
+    }));
+  } catch { return []; }
+}
+
+async function announceToNode(addr, httpPort) {
+  const isIpv6 = addr.includes(":") && !addr.includes(".");
+  const url = isIpv6 ? `http://[${addr}]:${httpPort}/peer/announce` : `http://${addr}:${httpPort}/peer/announce`;
+  const selfEndpoints = PUBLIC_ADDR
+    ? [{ transport: "tcp", address: PUBLIC_ADDR, port: PEER_PORT, priority: 1, ttl: 3600 }]
+    : [];
+  const payload = {
+    from: selfAgentId,
+    publicKey: selfPubB64,
+    alias: "DAP Gateway",
+    version: "1.0.0",
+    endpoints: selfEndpoints,
+    capabilities: ["gateway"],
+    timestamp: Date.now(),
+  };
+  payload.signature = signPayload(payload, selfKeypair.secretKey);
+  try {
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!resp.ok) return;
+    const data = await resp.json();
+    for (const peer of data.peers ?? []) {
+      if (peer.agentId && peer.agentId !== selfAgentId) {
+        upsertPeer(peer.agentId, peer.publicKey, {
+          alias: peer.alias, endpoints: peer.endpoints, capabilities: peer.capabilities,
+        });
+      }
+    }
+    console.log(`[gateway] Announced to ${addr}:${httpPort}, got ${data.peers?.length ?? 0} peers`);
+  } catch (e) {
+    console.warn(`[gateway] Could not reach bootstrap ${addr}:${httpPort}: ${e.message}`);
+  }
+}
+
+async function discoverWorlds() {
+  const nodes = await fetchBootstrapNodes();
+  if (!nodes.length) { console.warn("[gateway] No bootstrap nodes found"); return; }
+  await Promise.allSettled(nodes.map((n) => announceToNode(n.addr, n.httpPort)));
+  const worlds = findByCapability("world:");
+  console.log(`[gateway] Discovered ${worlds.length} world(s), ${peers.size} peers total`);
+}
+
+// ---------------------------------------------------------------------------
+// DAP peer server (receive world.state broadcasts from World Agents)
+// ---------------------------------------------------------------------------
+
+async function startPeerListener() {
+  const peerServer = Fastify({ logger: false });
+
+  peerServer.get("/peer/ping", async () => ({ ok: true, ts: Date.now(), role: "gateway" }));
+  peerServer.get("/peer/peers", async () => ({ peers: getPeersForExchange() }));
+
+  peerServer.post("/peer/announce", async (req, reply) => {
+    const ann = req.body;
+    if (!ann?.publicKey || !ann?.from) return reply.code(400).send({ error: "Invalid announce" });
+    const { signature, ...signable } = ann;
+    if (!verifySignature(ann.publicKey, signable, signature)) {
+      return reply.code(403).send({ error: "Invalid signature" });
+    }
+    if (agentIdFromPublicKey(ann.publicKey) !== ann.from) {
+      return reply.code(400).send({ error: "agentId mismatch" });
+    }
+    upsertPeer(ann.from, ann.publicKey, {
+      alias: ann.alias, endpoints: ann.endpoints, capabilities: ann.capabilities,
+    });
+    return { ok: true, peers: getPeersForExchange(20) };
+  });
+
+  peerServer.post("/peer/message", async (req, reply) => {
+    const msg = req.body;
+    if (!msg?.publicKey || !msg?.from) return reply.code(400).send({ error: "Invalid message" });
+    const { signature, ...signable } = msg;
+    if (!verifySignature(msg.publicKey, signable, signature)) {
+      return reply.code(403).send({ error: "Invalid signature" });
+    }
+
+    // Handle world.state broadcasts from World Agents
+    if (msg.event === "world.state") {
+      let state;
+      try { state = typeof msg.content === "string" ? JSON.parse(msg.content) : msg.content; } catch { return { ok: true }; }
+      const worldId = state.worldId;
+      if (worldId) broadcast(worldId, { type: "world.state", ...state });
+    }
+
+    upsertPeer(msg.from, msg.publicKey, {});
+    return { ok: true };
+  });
+
+  await peerServer.listen({ port: PEER_PORT, host: "::" });
+  console.log(`[gateway] DAP peer listener on [::]:${PEER_PORT}`);
+}
+
+// ---------------------------------------------------------------------------
+// Public HTTP + WebSocket server
+// ---------------------------------------------------------------------------
+
+const app = Fastify({ logger: false });
+await app.register(cors, { origin: true });
+await app.register(websocketPlugin);
+
+app.get("/health", async () => ({
+  ok: true, ts: Date.now(), agentId: selfAgentId,
+  peers: peers.size, worlds: findByCapability("world:").length,
+}));
+
+app.get("/agents", async () => ({
+  agents: getPeersForExchange(100),
+}));
+
+app.get("/worlds", async () => {
+  const worlds = findByCapability("world:");
+  return {
+    worlds: worlds.map((w) => {
+      const cap = w.capabilities.find((c) => c.startsWith("world:")) ?? "";
+      const worldId = cap.slice("world:".length);
+      return {
+        worldId,
+        agentId: w.agentId,
+        name: w.alias || worldId,
+        reachable: w.endpoints?.length > 0,
+        lastSeen: w.lastSeen,
+      };
+    }),
+  };
+});
+
+app.get("/world/:worldId", async (req, reply) => {
+  const { worldId } = req.params;
+  const worlds = findByCapability(`world:${worldId}`);
+  if (!worlds.length) return reply.code(404).send({ error: "World not found" });
+  const w = worlds[0];
+  return {
+    worldId,
+    agentId: w.agentId,
+    name: w.alias || worldId,
+    endpoints: w.endpoints,
+    reachable: w.endpoints?.length > 0,
+    subscribers: worldSubs.get(worldId)?.size ?? 0,
+    lastSeen: w.lastSeen,
+  };
+});
+
+// WebSocket endpoint: /ws?world=<worldId>
+app.get("/ws", { websocket: true }, (socket, req) => {
+  const worldId = new URL(req.url, "http://x").searchParams.get("world");
+  if (!worldId) {
+    socket.send(JSON.stringify({ type: "error", message: "Missing ?world= param" }));
+    socket.close();
+    return;
+  }
+
+  // Generate ephemeral browser session identity
+  const seed = nacl.randomBytes(32);
+  const kp = nacl.sign.keyPair.fromSeed(seed);
+  const pubB64 = Buffer.from(kp.publicKey).toString("base64");
+  const agentId = agentIdFromPublicKey(pubB64);
+  const sessionId = agentId;
+
+  sessions.set(sessionId, { agentId, keypair: kp, pubB64, worldId, alias: `guest-${agentId.slice(0, 6)}` });
+  subscribe(worldId, socket);
+
+  socket.send(JSON.stringify({ type: "connected", agentId, worldId }));
+  console.log(`[gateway] WS connected: ${agentId.slice(0, 8)} → world:${worldId}`);
+
+  socket.on("message", async (raw) => {
+    let msg;
+    try { msg = JSON.parse(raw.toString()); } catch { return; }
+
+    const session = sessions.get(sessionId);
+    if (!session) return;
+
+    switch (msg.type) {
+      case "join": {
+        if (msg.alias) session.alias = msg.alias.slice(0, 32);
+        const result = await sendToWorld(worldId, "world.join", {
+          alias: session.alias, agentId: session.agentId,
+        });
+        socket.send(JSON.stringify({ type: "join_result", ...result }));
+        break;
+      }
+      case "action": {
+        const result = await sendToWorld(worldId, "world.action", {
+          action: msg.action, agentId: session.agentId,
+          x: msg.x, y: msg.y, data: msg.data,
+        });
+        socket.send(JSON.stringify({ type: "action_result", ...result }));
+        break;
+      }
+      case "leave": {
+        await sendToWorld(worldId, "world.leave", { agentId: session.agentId });
+        break;
+      }
+    }
+  });
+
+  socket.on("close", async () => {
+    const session = sessions.get(sessionId);
+    if (session) {
+      await sendToWorld(worldId, "world.leave", { agentId: session.agentId });
+      sessions.delete(sessionId);
+    }
+    unsubscribe(worldId, socket);
+    console.log(`[gateway] WS disconnected: ${sessionId.slice(0, 8)}`);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Startup
+// ---------------------------------------------------------------------------
+
+await startPeerListener();
+await app.listen({ port: HTTP_PORT, host: "::" });
+console.log(`[gateway] Public HTTP on [::]:${HTTP_PORT}`);
+
+// Discovery
+setTimeout(discoverWorlds, 2_000);
+setInterval(discoverWorlds, DISCOVERY_INTERVAL_MS);
