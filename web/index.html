@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DAP Playground</title>
+  <link rel="stylesheet" href="style.css">
+  <script>
+    // Override gateway URL if deployed separately
+    // window.GATEWAY_WS_URL = "ws://your-gateway:8100/ws"
+    // window.GATEWAY_HTTP_URL = "http://your-gateway:8100"
+  </script>
+</head>
+<body>
+<div id="app">
+  <header>
+    <div id="status-dot"></div>
+    <h1>DAP Playground</h1>
+    <span id="status-text">not connected</span>
+    <span id="agent-id-display"></span>
+  </header>
+
+  <main>
+    <!-- Left: world list -->
+    <div id="worlds-panel">
+      <h2>Worlds</h2>
+      <div id="worlds-list">
+        <div style="padding:12px;color:#7070a0;font-size:11px;">Loading...</div>
+      </div>
+    </div>
+
+    <!-- Center: canvas -->
+    <div id="canvas-area">
+      <div id="canvas-wrap">
+        <canvas id="world-canvas"></canvas>
+        <div id="canvas-overlay">
+          <span id="overlay-msg">Select a world from the left panel</span>
+        </div>
+      </div>
+
+      <div id="canvas-controls">
+        <input id="alias-input" type="text" placeholder="Your alias" maxlength="20">
+        <button id="join-btn" class="btn">Join World</button>
+        <button id="leave-btn" class="btn danger" disabled>Leave</button>
+        <span style="color:#7070a0;font-size:11px;">Click to move · WASD / arrows</span>
+      </div>
+    </div>
+
+    <!-- Right: events -->
+    <div id="events-panel">
+      <h2>Events</h2>
+      <div id="events-list"></div>
+    </div>
+  </main>
+</div>
+<script src="client.js"></script>
+</body>
+</html>
