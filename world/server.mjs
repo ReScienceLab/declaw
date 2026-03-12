@@ -31,6 +31,7 @@ const WORLD_NAME = process.env.WORLD_NAME ?? `World (${WORLD_ID})`;
 const WORLD_THEME = process.env.WORLD_THEME ?? "default";
 const PORT = parseInt(process.env.PEER_PORT ?? "8099");
 const DATA_DIR = process.env.DATA_DIR ?? "/data";
+const PUBLIC_ADDR = process.env.PUBLIC_ADDR ?? null; // own public IP/hostname for announce endpoints
 const BOOTSTRAP_URL = process.env.BOOTSTRAP_URL ?? "https://resciencelab.github.io/DAP/bootstrap.json";
 const BROADCAST_INTERVAL_MS = parseInt(process.env.BROADCAST_INTERVAL_MS ?? "5000");
 const MAX_EVENTS = 100;
@@ -219,12 +220,17 @@ async function fetchBootstrapNodes() {
 async function announceToNode(addr, httpPort) {
   const isIpv6 = addr.includes(":") && !addr.includes(".");
   const url = isIpv6 ? `http://[${addr}]:${httpPort}/peer/announce` : `http://${addr}:${httpPort}/peer/announce`;
+  // Advertise our own public address, not the bootstrap node's address
+  const selfAddr = PUBLIC_ADDR ?? null;
+  const endpoints = selfAddr
+    ? [{ transport: "tcp", address: selfAddr, port: PORT, priority: 1, ttl: 3600 }]
+    : [];
   const payload = {
     from: selfAgentId,
     publicKey: selfPubB64,
     alias: WORLD_NAME,
     version: "1.0.0",
-    endpoints: [{ transport: "tcp", address: addr, port: httpPort, priority: 1, ttl: 3600 }],
+    endpoints,
     capabilities: [`world:${WORLD_ID}`],
     timestamp: Date.now(),
   };
@@ -300,6 +306,18 @@ fastify.post("/peer/message", async (req, reply) => {
   }
   const agentId = msg.from;
   if (!agentId) return reply.code(400).send({ error: "Missing from" });
+
+  // Verify agentId matches publicKey (prevents identity spoofing)
+  const knownPeer = peers.get(agentId);
+  if (knownPeer?.publicKey) {
+    if (knownPeer.publicKey !== msg.publicKey) {
+      return reply.code(403).send({ error: "publicKey does not match TOFU binding for this agentId" });
+    }
+  } else {
+    if (agentIdFromPublicKey(msg.publicKey) !== agentId) {
+      return reply.code(400).send({ error: "agentId does not match publicKey" });
+    }
+  }
 
   // Update peer record on contact
   upsertPeer(agentId, msg.publicKey, {});
