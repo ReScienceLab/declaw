@@ -5,9 +5,13 @@
   "description": "DAP World Agent — standalone deployable world server",
   "main": "server.mjs",
   "scripts": {
-    "start": "node server.mjs"
+    "start": "node server.mjs",
+    "start:pokemon": "node pokemon.mjs"
   },
   "dependencies": {
+    "@pkmn/data": "^0.10.7",
+    "@pkmn/randoms": "^0.10.7",
+    "@pkmn/sim": "^0.10.7",
     "fastify": "^5.0.0",
     "tweetnacl": "^1.0.3"
   }

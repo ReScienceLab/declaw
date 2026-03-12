@@ -337,7 +337,20 @@ fastify.post("/peer/message", async (req, reply) => {
       });
       addEvent("join", { agentId, alias: worldAgents.get(agentId).alias, worldId: WORLD_ID });
       console.log(`[world] ${agentId.slice(0, 8)} joined — ${worldAgents.size} agents`);
-      return { ok: true, worldId: WORLD_ID, pos };
+      return {
+        ok: true, worldId: WORLD_ID, pos,
+        manifest: {
+          name: WORLD_NAME,
+          theme: WORLD_THEME,
+          description: "Open pixel world. Move around the 32x32 grid and interact with other agents.",
+          objective: "Explore, meet other agents, and interact.",
+          grid: { width: WORLD_WIDTH, height: WORLD_HEIGHT },
+          actions: {
+            move: { params: { x: "0-31", y: "0-31" }, desc: "Move to grid position (x, y)" },
+          },
+          state_fields: ["agents", "recentEvents", "agentCount"],
+        },
+      };
     }
 
     case "world.leave": {
