@@ -3,7 +3,7 @@ import assert from "node:assert/strict"
 import * as fs from "fs"
 import * as path from "path"
 import * as os from "os"
-import { initDb, upsertPeer, upsertDiscoveredPeer, listPeers, getPeer, removePeer, flushDb, tofuVerifyAndCache, tofuReplaceKey, setTofuTtl, getPeerIds, pruneStale, getEndpointAddress } from "../dist/peer-db.js"
+import { initDb, upsertPeer, upsertDiscoveredPeer, listPeers, getPeer, removePeer, flushDb, tofuVerifyAndCache, tofuReplaceKey, setTofuTtl, getPeerIds, pruneStale, getEndpointAddress, findPeersByCapability } from "../dist/peer-db.js"
 import { generateIdentity } from "../dist/identity.js"
 
 let tmpDir
@@ -166,5 +166,40 @@ describe("peer-db (agentId-keyed)", () => {
     assert.equal(getEndpointAddress(peer, "tcp"), "10.0.0.1")
     assert.equal(getEndpointAddress(peer, "quic"), "1.2.3.4")
     assert.equal(getEndpointAddress(peer, "tailscale"), null)
+  })
+})
+
+describe("findPeersByCapability", () => {
+  it("exact match returns peer with that capability", () => {
+    const id = generateIdentity()
+    upsertDiscoveredPeer(id.agentId, id.publicKey, { capabilities: ["world:pixel-city"] })
+    const results = findPeersByCapability("world:pixel-city")
+    assert.equal(results.length, 1)
+    assert.equal(results[0].agentId, id.agentId)
+  })
+
+  it("prefix match returns all world:* peers", () => {
+    const a = generateIdentity()
+    const b = generateIdentity()
+    const c = generateIdentity()
+    upsertDiscoveredPeer(a.agentId, a.publicKey, { capabilities: ["world:pixel-city"] })
+    upsertDiscoveredPeer(b.agentId, b.publicKey, { capabilities: ["world:dungeon"] })
+    upsertDiscoveredPeer(c.agentId, c.publicKey, { capabilities: ["chat"] })
+    const results = findPeersByCapability("world:")
+    assert.equal(results.length, 2)
+    assert.ok(results.some((p) => p.agentId === a.agentId))
+    assert.ok(results.some((p) => p.agentId === b.agentId))
+  })
+
+  it("returns empty array when no match", () => {
+    const id = generateIdentity()
+    upsertDiscoveredPeer(id.agentId, id.publicKey, { capabilities: ["chat"] })
+    assert.deepEqual(findPeersByCapability("world:"), [])
+  })
+
+  it("peer with no capabilities is not matched", () => {
+    const id = generateIdentity()
+    upsertDiscoveredPeer(id.agentId, id.publicKey, {})
+    assert.deepEqual(findPeersByCapability("world:"), [])
   })
 })

@@ -63,7 +63,7 @@ let _discoveryTimer: NodeJS.Timeout | null = null
 
 function buildAnnouncement(
   identity: Identity,
-  meta: { name?: string; version?: string; endpoints?: Endpoint[] } = {}
+  meta: { name?: string; version?: string; endpoints?: Endpoint[]; capabilities?: string[] } = {}
 ): Record<string, unknown> {
   const myPeers = getPeersForExchange(MAX_SHARED_PEERS).map((p) => ({
     agentId: p.agentId,
@@ -71,6 +71,7 @@ function buildAnnouncement(
     alias: p.alias || undefined,
     lastSeen: p.lastSeen,
     endpoints: p.endpoints ?? [],
+    capabilities: p.capabilities ?? [],
   }))
 
   const ann: Record<string, unknown> = {
@@ -79,6 +80,7 @@ function buildAnnouncement(
     timestamp: Date.now(),
     peers: myPeers,
     endpoints: meta.endpoints ?? [],
+    capabilities: meta.capabilities ?? [],
   }
   if (meta.name) ann.alias = meta.name
   if (meta.version) ann.version = meta.version

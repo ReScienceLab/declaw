@@ -8,7 +8,7 @@ import * as os from "os"
 import * as path from "path"
 import { execSync } from "child_process"
 import { loadOrCreateIdentity, deriveDidKey } from "./identity"
-import { initDb, listPeers, upsertPeer, removePeer, getPeer, flushDb, getPeerIds, getEndpointAddress, setTofuTtl } from "./peer-db"
+import { initDb, listPeers, upsertPeer, removePeer, getPeer, flushDb, getPeerIds, getEndpointAddress, setTofuTtl, findPeersByCapability } from "./peer-db"
 import { startPeerServer, stopPeerServer, getInbox, setSelfMeta, handleUdpMessage } from "./peer-server"
 import { sendP2PMessage, pingPeer, broadcastLeave, SendOptions } from "./peer-client"
 import { bootstrapDiscovery, startDiscoveryLoop, stopDiscoveryLoop, DEFAULT_BOOTSTRAP_PEERS } from "./peer-discovery"
@@ -442,18 +442,27 @@ export default function register(api: any) {
 
   api.registerTool({
     name: "p2p_list_peers",
-    description: "List all known P2P peers.",
-    parameters: { type: "object", properties: {}, required: [] },
-    async execute(_id: string, _params: Record<string, never>) {
-      const peers = listPeers()
+    description: "List all known P2P peers. Optionally filter by capability prefix (e.g. 'world:' or 'world:pixel-city').",
+    parameters: {
+      type: "object",
+      properties: {
+        capability: { type: "string", description: "Filter peers by capability prefix (e.g. 'world:')" },
+      },
+      required: [],
+    },
+    async execute(_id: string, params: { capability?: string }) {
+      const peers = params.capability
+        ? findPeersByCapability(params.capability)
+        : listPeers()
       if (peers.length === 0) {
-        return { content: [{ type: "text", text: "No peers yet." }] }
+        return { content: [{ type: "text", text: "No peers found." }] }
       }
       const lines = peers.map((p) => {
         const ago = Math.round((Date.now() - p.lastSeen) / 1000)
         const label = p.alias ? ` — ${p.alias}` : ""
         const ver = p.version ? ` [v${p.version}]` : ""
-        return `${p.agentId}${label}${ver} — last seen ${ago}s ago`
+        const caps = p.capabilities?.length ? ` [${p.capabilities.join(", ")}]` : ""
+        return `${p.agentId}${label}${ver}${caps} — last seen ${ago}s ago`
       })
       return { content: [{ type: "text", text: lines.join("\n") }] }
     },

@@ -81,6 +81,7 @@ export async function startPeerServer(port: number = 8099): Promise<void> {
       discoveredVia: agentId,
       source: "gossip",
       endpoints,
+      capabilities: ann.capabilities ?? [],
     })
 
     for (const p of ann.peers ?? []) {
@@ -91,6 +92,7 @@ export async function startPeerServer(port: number = 8099): Promise<void> {
         source: "gossip",
         lastSeen: p.lastSeen,
         endpoints: p.endpoints ?? [],
+        capabilities: p.capabilities ?? [],
       })
     }
 
