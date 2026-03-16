@@ -14,6 +14,7 @@
  *   WORLD_NAME    — human-readable name, e.g. "Pixel City"
  *   WORLD_THEME   — theme tag, e.g. "city" | "dungeon" | "space"
  *   PEER_PORT     — DAP HTTP port (default 8099)
+ *   PUBLIC_PORT   — externally reachable port for DAP announce (default PEER_PORT)
  *   DATA_DIR      — persistence directory (default /data)
  *   BOOTSTRAP_URL — URL of bootstrap.json (default GitHub Pages)
  *   BROADCAST_INTERVAL_MS — how often to broadcast world.state (default 5000)
@@ -30,10 +31,12 @@ if (!WORLD_ID) { console.error("[world] WORLD_ID env var is required"); process.
 const WORLD_NAME = process.env.WORLD_NAME ?? `World (${WORLD_ID})`;
 const WORLD_THEME = process.env.WORLD_THEME ?? "default";
 const PORT = parseInt(process.env.PEER_PORT ?? "8099");
+const PUBLIC_PORT = parseInt(process.env.PUBLIC_PORT ?? String(PORT)); // external port for announce (may differ from listen port in Docker)
 const DATA_DIR = process.env.DATA_DIR ?? "/data";
 const PUBLIC_ADDR = process.env.PUBLIC_ADDR ?? null; // own public IP/hostname for announce endpoints
 const BOOTSTRAP_URL = process.env.BOOTSTRAP_URL ?? "https://resciencelab.github.io/DAP/bootstrap.json";
 const BROADCAST_INTERVAL_MS = parseInt(process.env.BROADCAST_INTERVAL_MS ?? "5000");
+const STALE_TTL_MS = parseInt(process.env.STALE_TTL_MS ?? String(30 * 60 * 1000)); // 30 min
 const MAX_EVENTS = 100;
 const MAX_PEERS = 200;
 const WORLD_WIDTH = 32;
@@ -102,17 +105,27 @@ const peers = new Map(); // agentId -> { agentId, publicKey, alias, endpoints, l
 function upsertPeer(agentId, publicKey, opts = {}) {
   const now = Date.now();
   const existing = peers.get(agentId);
+  const lastSeen = opts.lastSeen
+    ? Math.max(existing?.lastSeen ?? 0, opts.lastSeen)
+    : now;
   peers.set(agentId, {
     agentId,
     publicKey: publicKey || existing?.publicKey || "",
     alias: opts.alias ?? existing?.alias ?? "",
     endpoints: opts.endpoints ?? existing?.endpoints ?? [],
     capabilities: opts.capabilities ?? existing?.capabilities ?? [],
-    lastSeen: now,
+    lastSeen,
   });
   if (peers.size > MAX_PEERS) {
     const oldest = [...peers.values()].sort((a, b) => a.lastSeen - b.lastSeen)[0];
     peers.delete(oldest.agentId);
+  }
+}
+
+function pruneStale(ttl = STALE_TTL_MS) {
+  const cutoff = Date.now() - ttl;
+  for (const [id, p] of peers) {
+    if (p.lastSeen < cutoff) peers.delete(id);
   }
 }
 
@@ -223,7 +236,7 @@ async function announceToNode(addr, httpPort) {
   // Advertise our own public address, not the bootstrap node's address
   const selfAddr = PUBLIC_ADDR ?? null;
   const endpoints = selfAddr
-    ? [{ transport: "tcp", address: selfAddr, port: PORT, priority: 1, ttl: 3600 }]
+    ? [{ transport: "tcp", address: selfAddr, port: PUBLIC_PORT, priority: 1, ttl: 3600 }]
     : [];
   const payload = {
     from: selfAgentId,
@@ -248,6 +261,7 @@ async function announceToNode(addr, httpPort) {
       if (peer.agentId && peer.agentId !== selfAgentId) {
         upsertPeer(peer.agentId, peer.publicKey, {
           alias: peer.alias, endpoints: peer.endpoints, capabilities: peer.capabilities,
+          lastSeen: peer.lastSeen,
         });
       }
     }
@@ -400,6 +414,8 @@ console.log(`[world] Listening on [::]:${PORT}  world=${WORLD_ID}`);
 setTimeout(bootstrapDiscovery, 3_000);
 // Re-announce every 10min
 setInterval(bootstrapDiscovery, 10 * 60 * 1000);
+// Prune stale peers every 5 minutes
+setInterval(() => pruneStale(), 5 * 60 * 1000);
 
 // Broadcast world state periodically
 setInterval(broadcastWorldState, BROADCAST_INTERVAL_MS);
