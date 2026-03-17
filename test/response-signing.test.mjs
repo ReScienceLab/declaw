@@ -12,6 +12,10 @@ import * as fs from "node:fs"
 import * as path from "node:path"
 import crypto from "node:crypto"
 
+import { createRequire } from "node:module"
+const require = createRequire(import.meta.url)
+const { version: PROTOCOL_VERSION } = require("../package.json")
+
 const nacl = (await import("tweetnacl")).default
 
 const { startPeerServer, stopPeerServer } = await import("../dist/peer-server.js")
@@ -55,7 +59,7 @@ function verifyResponseSig(headers, status, body, publicKeyB64) {
   const expectedDigest = computeContentDigest(body)
   if (cd !== expectedDigest) return { ok: false, digestMismatch: true }
 
-  const signingInput = canonicalize({ v: "0.2", from, kid, ts, status, contentDigest: cd })
+  const signingInput = canonicalize({ v: PROTOCOL_VERSION, from, kid, ts, status, contentDigest: cd })
   const pubBytes = Buffer.from(publicKeyB64, "base64")
   const sigBytes = Buffer.from(sig, "base64")
   const msg = Buffer.from(JSON.stringify(signingInput))

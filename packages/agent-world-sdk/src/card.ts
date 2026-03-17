@@ -12,6 +12,7 @@ import { FlattenedSign } from "jose"
 import { createPrivateKey } from "node:crypto"
 import { canonicalize } from "./crypto.js"
 import { deriveDidKey, toPublicKeyMultibase } from "./identity.js"
+import { PROTOCOL_VERSION } from "./version.js"
 import type { Identity } from "./types.js"
 
 // PKCS8 DER header for an Ed25519 32-byte seed (RFC 8410)
@@ -64,7 +65,7 @@ export async function buildSignedAgentCard(
     ...(opts.rpcUrl ? { a2a: { rpcUrl: opts.rpcUrl } } : {}),
     extensions: {
       agentwire: {
-        version: "0.2",
+        version: PROTOCOL_VERSION,
         agentId: identity.agentId,
         identityMode: "direct",
         identity: {

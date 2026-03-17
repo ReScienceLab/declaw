@@ -1,5 +1,6 @@
 import crypto from "node:crypto"
 import nacl from "tweetnacl"
+import { PROTOCOL_VERSION } from "./version.js"
 
 export function agentIdFromPublicKey(publicKeyB64: string): string {
   const fullHex = crypto.createHash("sha256")
@@ -67,7 +68,7 @@ function buildRequestSigningInput(opts: {
   contentDigest: string
 }): Record<string, string> {
   return {
-    v: "0.2",
+    v: PROTOCOL_VERSION,
     from: opts.from,
     kid: opts.kid,
     ts: opts.ts,
@@ -100,7 +101,7 @@ export function signHttpRequest(
     identity.secretKey
   )
   return {
-    "X-AgentWire-Version": "0.2",
+    "X-AgentWire-Version": PROTOCOL_VERSION,
     "X-AgentWire-From": identity.agentId,
     "X-AgentWire-KeyId": kid,
     "X-AgentWire-Timestamp": ts,
@@ -171,7 +172,7 @@ function buildResponseSigningInput(opts: {
   contentDigest: string
 }): Record<string, unknown> {
   return {
-    v: "0.2",
+    v: PROTOCOL_VERSION,
     from: opts.from,
     kid: opts.kid,
     ts: opts.ts,
@@ -200,7 +201,7 @@ export function signHttpResponse(
     identity.secretKey
   )
   return {
-    "X-AgentWire-Version": "0.2",
+    "X-AgentWire-Version": PROTOCOL_VERSION,
     "X-AgentWire-From": identity.agentId,
     "X-AgentWire-KeyId": kid,
     "X-AgentWire-Timestamp": ts,

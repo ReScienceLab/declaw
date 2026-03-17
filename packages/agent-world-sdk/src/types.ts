@@ -103,10 +103,17 @@ export interface KeyRotationIdentity {
   publicKeyMultibase: string
 }
 
+export interface KeyRotationProof {
+  protected: string
+  signature: string
+}
+
 export interface KeyRotationRequest {
-  type: "key-rotation"
-  version: "0.2"
+  type: "agentwire-identity-rotation"
+  version: string
   logicalCardUrl?: string
+  oldAgentId: string
+  newAgentId: string
   oldIdentity: KeyRotationIdentity
   newIdentity: KeyRotationIdentity
   timestamp: number
@@ -116,7 +123,7 @@ export interface KeyRotationRequest {
   overlapUntil?: string
   reason?: string
   proofs: {
-    signedByOld: string
-    signedByNew: string
+    signedByOld: KeyRotationProof
+    signedByNew: KeyRotationProof
   }
 }
