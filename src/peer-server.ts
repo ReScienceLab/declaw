@@ -225,38 +225,19 @@ export async function startPeerServer(port: number = 8099, opts?: PeerServerOpti
   server.post("/peer/key-rotation", async (req, reply) => {
     const rot = req.body as any
 
-    // ── Detect format: v0.2 structured vs legacy flat ─────────────────────────
-    const isV2 = rot?.type === "key-rotation" && rot?.version === "0.2"
-
-    let agentId: string
-    let oldPublicKeyB64: string
-    let newPublicKeyB64: string
-    let timestamp: number
-    let sigByOld: string
-    let sigByNew: string
-
-    if (isV2) {
-      if (!rot.oldIdentity?.agentId || !rot.oldIdentity?.publicKeyMultibase ||
-          !rot.newIdentity?.publicKeyMultibase || !rot.proofs?.signedByOld || !rot.proofs?.signedByNew) {
-        return reply.code(400).send({ error: "Missing required key rotation fields" })
-      }
-      agentId = rot.oldIdentity.agentId
-      oldPublicKeyB64 = multibaseToBase64(rot.oldIdentity.publicKeyMultibase)
-      newPublicKeyB64 = multibaseToBase64(rot.newIdentity.publicKeyMultibase)
-      timestamp = rot.timestamp
-      sigByOld = rot.proofs.signedByOld
-      sigByNew = rot.proofs.signedByNew
-    } else {
-      if (!rot.agentId || !rot.oldPublicKey || !rot.newPublicKey || !rot.signatureByOldKey || !rot.signatureByNewKey) {
-        return reply.code(400).send({ error: "Missing required key rotation fields" })
-      }
-      agentId = rot.agentId
-      oldPublicKeyB64 = rot.oldPublicKey
-      newPublicKeyB64 = rot.newPublicKey
-      timestamp = rot.timestamp
-      sigByOld = rot.signatureByOldKey
-      sigByNew = rot.signatureByNewKey
+    if (!rot.oldIdentity?.agentId || !rot.oldIdentity?.publicKeyMultibase ||
+        !rot.newIdentity?.publicKeyMultibase || !rot.proofs?.signedByOld || !rot.proofs?.signedByNew) {
+      return reply.code(400).send({ error: "Missing required key rotation fields" })
     }
+
+    if (rot.type !== "key-rotation" || rot.version !== "0.2") {
+      return reply.code(400).send({ error: "Expected type=key-rotation and version=0.2" })
+    }
+
+    const agentId: string = rot.oldIdentity.agentId
+    const oldPublicKeyB64 = multibaseToBase64(rot.oldIdentity.publicKeyMultibase)
+    const newPublicKeyB64 = multibaseToBase64(rot.newIdentity.publicKeyMultibase)
+    const timestamp: number = rot.timestamp
 
     if (agentIdFromPublicKey(oldPublicKeyB64) !== agentId) {
       return reply.code(400).send({ error: "agentId does not match oldPublicKey" })
@@ -273,15 +254,15 @@ export async function startPeerServer(port: number = 8099, opts?: PeerServerOpti
       timestamp,
     }
 
-    if (!verifySignature(oldPublicKeyB64, signable, sigByOld)) {
+    if (!verifySignature(oldPublicKeyB64, signable, rot.proofs.signedByOld)) {
       return reply.code(403).send({ error: "Invalid signatureByOldKey" })
     }
 
-    if (!verifySignature(newPublicKeyB64, signable, sigByNew)) {
+    if (!verifySignature(newPublicKeyB64, signable, rot.proofs.signedByNew)) {
       return reply.code(403).send({ error: "Invalid signatureByNewKey" })
     }
 
-    // TOFU: clean rotation only — key-loss recovery not allowed silently
+    // TOFU: clean rotation only — key-loss recovery requires manual re-pairing
     const knownPeer = getPeer(agentId)
     if (knownPeer?.publicKey && knownPeer.publicKey !== oldPublicKeyB64) {
       return reply.code(403).send({ error: "TOFU binding mismatch — key-loss recovery requires manual re-pairing" })

@@ -169,46 +169,22 @@ export function registerPeerRoutes(
   })
 
   // POST /peer/key-rotation — AgentWire v0.2 §6.10/§10.4
-  // Accepts both the new v0.2 structured format and the legacy flat format.
   fastify.post("/peer/key-rotation", async (req, reply) => {
-    const body = req.body as Record<string, unknown>
+    const rot = req.body as unknown as KeyRotationRequest
 
-    // ── Detect format ─────────────────────────────────────────────────────────
-    const isV2 = body?.type === "key-rotation" && body?.version === "0.2"
-
-    let agentId: string
-    let oldPublicKeyB64: string
-    let newPublicKeyB64: string
-    let timestamp: number
-    let sigByOld: string
-    let sigByNew: string
-
-    if (isV2) {
-      const rot = body as unknown as KeyRotationRequest
-      if (!rot.oldIdentity?.agentId || !rot.oldIdentity?.publicKeyMultibase ||
-          !rot.newIdentity?.publicKeyMultibase || !rot.proofs?.signedByOld || !rot.proofs?.signedByNew) {
-        return reply.code(400).send({ error: "Missing required key rotation fields" })
-      }
-      agentId = rot.oldIdentity.agentId
-      // publicKeyMultibase: "z" + base58(bytes) — derive base64 via identity helper
-      oldPublicKeyB64 = multibaseToBase64(rot.oldIdentity.publicKeyMultibase)
-      newPublicKeyB64 = multibaseToBase64(rot.newIdentity.publicKeyMultibase)
-      timestamp = rot.timestamp
-      sigByOld = rot.proofs.signedByOld
-      sigByNew = rot.proofs.signedByNew
-    } else {
-      // Legacy flat format
-      if (!body?.agentId || !body?.oldPublicKey || !body?.newPublicKey ||
-          !body?.signatureByOldKey || !body?.signatureByNewKey) {
-        return reply.code(400).send({ error: "Missing required key rotation fields" })
-      }
-      agentId = body.agentId as string
-      oldPublicKeyB64 = body.oldPublicKey as string
-      newPublicKeyB64 = body.newPublicKey as string
-      timestamp = body.timestamp as number
-      sigByOld = body.signatureByOldKey as string
-      sigByNew = body.signatureByNewKey as string
+    if (rot?.type !== "key-rotation" || rot?.version !== "0.2") {
+      return reply.code(400).send({ error: "Expected type=key-rotation and version=0.2" })
     }
+
+    if (!rot.oldIdentity?.agentId || !rot.oldIdentity?.publicKeyMultibase ||
+        !rot.newIdentity?.publicKeyMultibase || !rot.proofs?.signedByOld || !rot.proofs?.signedByNew) {
+      return reply.code(400).send({ error: "Missing required key rotation fields" })
+    }
+
+    const agentId = rot.oldIdentity.agentId
+    const oldPublicKeyB64 = multibaseToBase64(rot.oldIdentity.publicKeyMultibase)
+    const newPublicKeyB64 = multibaseToBase64(rot.newIdentity.publicKeyMultibase)
+    const timestamp = rot.timestamp
 
     if (agentIdFromPublicKey(oldPublicKeyB64) !== agentId) {
       return reply.code(400).send({ error: "agentId does not match oldPublicKey" })
@@ -219,21 +195,19 @@ export function registerPeerRoutes(
       return reply.code(400).send({ error: "Key rotation timestamp too old or too far in the future" })
     }
 
-    // ── Verify both signatures over the canonical rotation payload ────────────
     const signable = {
       agentId,
       oldPublicKey: oldPublicKeyB64,
       newPublicKey: newPublicKeyB64,
       timestamp,
     }
-    if (!verifySignature(oldPublicKeyB64, signable, sigByOld)) {
+    if (!verifySignature(oldPublicKeyB64, signable, rot.proofs.signedByOld)) {
       return reply.code(403).send({ error: "Invalid signatureByOldKey" })
     }
-    if (!verifySignature(newPublicKeyB64, signable, sigByNew)) {
+    if (!verifySignature(newPublicKeyB64, signable, rot.proofs.signedByNew)) {
       return reply.code(403).send({ error: "Invalid signatureByNewKey" })
     }
 
-    // TOFU: if key is already cached, this is a clean rotation (not key-loss recovery)
     const known = peerDb.get(agentId)
     if (known?.publicKey && known.publicKey !== oldPublicKeyB64) {
       return reply.code(403).send({ error: "TOFU binding mismatch — key-loss recovery requires manual re-pairing" })
@@ -244,12 +218,10 @@ export function registerPeerRoutes(
   })
 }
 
-/** Convert a multibase (z<base58btc>) public key to base64. */
+/** Convert a multibase (z<base58btc>) Ed25519 public key to base64. */
 function multibaseToBase64(multibase: string): string {
   if (!multibase.startsWith("z")) throw new Error("Unsupported multibase prefix")
-  const b58 = multibase.slice(1)
-  const bytes = base58Decode(b58)
-  // Strip 2-byte multicodec prefix (0xed 0x01 for Ed25519)
+  const bytes = base58Decode(multibase.slice(1))
   const keyBytes = bytes.length === 34 ? bytes.slice(2) : bytes
   return Buffer.from(keyBytes).toString("base64")
 }
