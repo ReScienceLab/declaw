@@ -56,8 +56,7 @@ export async function createWorldServer(
       theme: manifest?.theme ?? worldTheme,
     }
 
-    if (worldType === "hosted" && hostAgentId) {
-      result.type = "hosted"
+    if (result.type === "hosted" && hostAgentId) {
       result.host = {
         agentId: hostAgentId,
         cardUrl: hostCardUrl,
