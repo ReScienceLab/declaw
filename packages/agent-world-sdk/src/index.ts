@@ -14,8 +14,6 @@ export type {
   Identity,
   BootstrapNode,
   ActionParamSchema,
-  StructuredActionSchema,
-  LegacyActionSchema,
   ActionSchema,
   WorldRule,
   HostInfo,

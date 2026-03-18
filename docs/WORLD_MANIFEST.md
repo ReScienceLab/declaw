@@ -115,7 +115,7 @@ actions:
         desc: "Move direction"
 ```
 
-Parameter schemas support `type` (`string` / `number` / `boolean`), `required`, `desc`, `min` / `max`, and `enum`. The legacy `{ params: { key: "description" } }` format remains compatible; the SDK converts it automatically.
+Parameter schemas support `type` (`string` / `number` / `boolean`), `required`, `desc`, `min` / `max`, and `enum`.
 
 ### `host`
 Hosted worlds declare the host agent's identity via `agentId`, `cardUrl`, `endpoints`, `name`, `description`. Clients should verify the host Agent Card JWS signature.

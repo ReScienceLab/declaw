@@ -38,18 +38,11 @@ export interface ActionParamSchema {
   enum?: Array<string | number>
 }
 
-export interface StructuredActionSchema {
+export interface ActionSchema {
   desc: string
   params?: Record<string, ActionParamSchema>
   phase?: string[]
 }
-
-export interface LegacyActionSchema {
-  desc: string
-  params?: Record<string, string>
-}
-
-export type ActionSchema = StructuredActionSchema | LegacyActionSchema
 
 export interface WorldRule {
   id?: string
@@ -79,7 +72,7 @@ export interface WorldManifest {
   theme?: string
   description?: string
   objective?: string
-  rules?: WorldRule[] | string[]
+  rules?: WorldRule[]
   actions?: Record<string, ActionSchema>
   host?: HostInfo
   lifecycle?: WorldLifecycle
