@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.3
+
+### Patch Changes
+
+- d056d07: fix: use cd instead of --prefix for SDK npm publish to avoid publishing root package
+
 ## 0.4.2
 
 ### Patch Changes
