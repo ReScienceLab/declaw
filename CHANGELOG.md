@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.1
+
+### Patch Changes
+
+- df08054: fix: install and build agent-world-sdk in CI workflows
+
 ## 0.4.0
 
 ### Minor Changes
