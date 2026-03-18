@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.2
+
+### Patch Changes
+
+- fe2a12a: fix: add NPM_TOKEN env to release workflow for changesets publish detection
+
 ## 0.4.1
 
 ### Patch Changes

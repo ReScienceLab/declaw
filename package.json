@@ -1,6 +1,6 @@
 {
   "name": "@resciencelab/dap",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Direct encrypted P2P communication between OpenClaw instances",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
