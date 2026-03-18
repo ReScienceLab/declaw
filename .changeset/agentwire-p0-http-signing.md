@@ -1,6 +1,5 @@
 ---
 "@resciencelab/dap": minor
-"@resciencelab/agent-world-sdk": minor
 ---
 
 feat(agentwire-p0): add AgentWire v0.2 HTTP header signing and eliminate gateway crypto duplication

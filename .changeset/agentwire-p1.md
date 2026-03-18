@@ -1,6 +1,5 @@
 ---
 "@resciencelab/dap": minor
-"@resciencelab/agent-world-sdk": minor
 ---
 
 feat(agentwire-p1): AgentWire v0.2 agentId namespace + Agent Card
