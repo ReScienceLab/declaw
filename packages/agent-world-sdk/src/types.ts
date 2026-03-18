@@ -35,14 +35,21 @@ export interface ActionParamSchema {
   desc?: string
   min?: number
   max?: number
-  enum?: (string | number)[]
+  enum?: Array<string | number>
 }
 
-export interface ActionSchema {
+export interface StructuredActionSchema {
   desc: string
   params?: Record<string, ActionParamSchema>
   phase?: string[]
 }
+
+export interface LegacyActionSchema {
+  desc: string
+  params?: Record<string, string>
+}
+
+export type ActionSchema = StructuredActionSchema | LegacyActionSchema
 
 export interface WorldRule {
   id?: string
