@@ -4,7 +4,7 @@ import { PeerDb } from "./peer-db.js"
 import { registerPeerRoutes } from "./peer-protocol.js"
 import { startDiscovery } from "./bootstrap.js"
 import { canonicalize, signPayload, signHttpRequest } from "./crypto.js"
-import type { WorldConfig, WorldHooks, WorldServer, WorldManifest } from "./types.js"
+import type { WorldConfig, WorldHooks, WorldServer, WorldManifest, WorldRule, ActionSchema, ActionParamSchema, StructuredActionSchema } from "./types.js"
 
 const DEFAULT_BOOTSTRAP_URL = "https://resciencelab.github.io/DAP/bootstrap.json"
 
@@ -48,18 +48,36 @@ export async function createWorldServer(
     cardDescription,
   } = config
 
-  function enrichManifest(manifest: WorldManifest): WorldManifest {
-    if (worldType !== "hosted" || !hostAgentId) return manifest
-    return {
+  function buildManifest(manifest?: WorldManifest): WorldManifest {
+    const base: WorldManifest = {
+      name: manifest?.name ?? worldName,
       ...manifest,
-      type: "hosted",
-      host: {
+    }
+
+    const normalized: WorldManifest = {
+      ...base,
+      type: base.type ?? worldType ?? "programmatic",
+    }
+
+    const rules = ensureRules(base.rules)
+    if (rules) normalized.rules = rules
+
+    const actions = ensureActions(base.actions)
+    if (actions) normalized.actions = actions
+
+    if (!normalized.theme) normalized.theme = worldTheme
+
+    if (worldType === "hosted" && hostAgentId) {
+      normalized.type = "hosted"
+      normalized.host = {
         agentId: hostAgentId,
         cardUrl: hostCardUrl,
         endpoints: hostEndpoints,
-        ...manifest.host,
-      },
+        ...normalized.host,
+      }
     }
+
+    return normalized
   }
 
   const resolvedPublicPort = publicPort ?? port
@@ -104,7 +122,7 @@ export async function createWorldServer(
           }
           agentLastSeen.set(agentId, Date.now())
           const result = await hooks.onJoin(agentId, data)
-          sendReply({ ok: true, worldId, manifest: enrichManifest(result.manifest), state: result.state })
+          sendReply({ ok: true, worldId, manifest: buildManifest(result.manifest), state: result.state })
           console.log(`[world] ${agentId.slice(0, 8)} joined — ${agentLastSeen.size} agents`)
           return
         }
@@ -233,4 +251,45 @@ export async function createWorldServer(
       await fastify.close()
     },
   }
+}
+
+
+function ensureRules(rules?: Array<string | WorldRule>): WorldRule[] | undefined {
+  if (!rules?.length) return undefined
+  return rules.map((rule, index) => {
+    if (typeof rule === "string") {
+      return { id: `rule-${index + 1}`, text: rule, enforced: false }
+    }
+    return { ...rule, id: rule.id ?? `rule-${index + 1}` }
+  })
+}
+
+function ensureActions(actions?: Record<string, ActionSchema>): Record<string, StructuredActionSchema> | undefined {
+  if (!actions) return undefined
+  const normalized: Record<string, StructuredActionSchema> = {}
+  for (const [name, schema] of Object.entries(actions)) {
+    if (!schema) continue
+    const params = normalizeActionParams(schema.params as Record<string, ActionParamSchema | string> | undefined)
+    const phase = "phase" in schema ? schema.phase : undefined
+    normalized[name] = {
+      desc: schema.desc,
+      ...(params ? { params } : {}),
+      ...(phase ? { phase } : {}),
+    }
+  }
+  return Object.keys(normalized).length ? normalized : undefined
+}
+
+function normalizeActionParams(params?: Record<string, ActionParamSchema | string>): Record<string, ActionParamSchema> | undefined {
+  if (!params) return undefined
+  const normalized: Record<string, ActionParamSchema> = {}
+  for (const [name, schema] of Object.entries(params)) {
+    if (!schema) continue
+    if (typeof schema === "string") {
+      normalized[name] = { type: "string", desc: schema }
+      continue
+    }
+    normalized[name] = { ...schema, type: schema.type ?? "string" }
+  }
+  return Object.keys(normalized).length ? normalized : undefined
 }

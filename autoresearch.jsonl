@@ -1,1 +1,2 @@
 {"type":"config","name":"Distributed World Authoring","metricName":"total_ms","metricUnit":"ms","bestDirection":"lower"}
+{"run":1,"commit":"7ab85dd","metric":2141,"metrics":{"dap_build_ms":1297,"dap_tests_ms":736,"pokemon_check_ms":47},"status":"keep","description":"baseline build+tests timings","timestamp":1773818689202,"segment":0}
