@@ -103,18 +103,27 @@ const server = await createWorldServer(
       return {
         manifest: {
           name: process.env.WORLD_NAME ?? `World (${WORLD_ID})`,
+          type: "programmatic",
           theme: process.env.WORLD_THEME ?? "default",
           description: `A world on a ${WORLD_WIDTH}x${WORLD_HEIGHT} grid.`,
           objective: "Explore the world and interact with other agents.",
           rules: [
-            `The world is a ${WORLD_WIDTH}x${WORLD_HEIGHT} grid.`,
-            "Agents can move to any tile by sending a move action with x,y coordinates.",
-            "Idle agents are evicted after 5 minutes.",
+            { id: "rule-1", text: `The world is a ${WORLD_WIDTH}x${WORLD_HEIGHT} grid.`, enforced: true },
+            { id: "rule-2", text: "Agents can move to any tile by sending a move action with x,y coordinates.", enforced: true },
+            { id: "rule-3", text: "Idle agents are evicted after 5 minutes.", enforced: false },
           ],
+          lifecycle: {
+            matchmaking: "free",
+            evictionPolicy: "idle",
+            idleTimeoutMs: 5 * 60 * 1000,
+          },
           actions: {
             move: {
-              params: { x: `0-${WORLD_WIDTH - 1}`, y: `0-${WORLD_HEIGHT - 1}` },
               desc: "Move to position (x, y) on the grid.",
+              params: {
+                x: { type: "number", required: true, desc: "Target x position", min: 0, max: WORLD_WIDTH - 1 },
+                y: { type: "number", required: true, desc: "Target y position", min: 0, max: WORLD_HEIGHT - 1 },
+              },
             },
           },
           state_fields: [

@@ -112,6 +112,7 @@ function upsertPeer(agentId, publicKey, opts = {}) {
     alias: opts.alias ?? existing?.alias ?? "",
     version: opts.version ?? existing?.version,
     endpoints: opts.endpoints ?? existing?.endpoints ?? [],
+    capabilities: opts.capabilities ?? existing?.capabilities ?? [],
     firstSeen: existing?.firstSeen ?? now,
     lastSeen,
     source: opts.source ?? "gossip",
@@ -141,12 +142,13 @@ function getPeersForExchange(limit = 50) {
   return [...peers.values()]
     .sort((a, b) => b.lastSeen - a.lastSeen)
     .slice(0, limit)
-    .map(({ agentId, publicKey, alias, version, endpoints, lastSeen }) => ({
+    .map(({ agentId, publicKey, alias, version, endpoints, capabilities, lastSeen }) => ({
       agentId,
       publicKey,
       alias,
       version,
       endpoints: endpoints ?? [],
+      capabilities: capabilities ?? [],
       lastSeen,
     }));
 }
@@ -326,6 +328,7 @@ server.post("/peer/announce", async (req, reply) => {
     alias: ann.alias,
     version: ann.version,
     endpoints: ann.endpoints ?? [],
+    capabilities: ann.capabilities ?? [],
     source: "gossip",
     discoveredVia: derivedId,
   });
@@ -337,6 +340,7 @@ server.post("/peer/announce", async (req, reply) => {
     upsertPeer(pid, p.publicKey, {
       alias: p.alias,
       endpoints: p.endpoints ?? [],
+      capabilities: p.capabilities ?? [],
       source: "gossip",
       discoveredVia: derivedId,
       lastSeen: p.lastSeen,
@@ -560,6 +564,7 @@ async function syncWithSiblings() {
             alias: body.self.alias,
             version: body.self.version,
             endpoints: body.self.endpoints ?? [],
+            capabilities: body.self.capabilities ?? [],
             source: "gossip",
             discoveredVia: body.self.agentId,
           });
@@ -570,6 +575,7 @@ async function syncWithSiblings() {
             alias: p.alias,
             version: p.version,
             endpoints: p.endpoints ?? [],
+            capabilities: p.capabilities ?? [],
             source: "gossip",
             discoveredVia: body.self?.agentId,
             lastSeen: p.lastSeen,

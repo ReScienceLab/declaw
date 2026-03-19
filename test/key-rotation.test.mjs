@@ -8,22 +8,34 @@ const nacl = (await import("tweetnacl")).default
 
 import { createRequire } from "node:module"
 const require = createRequire(import.meta.url)
-const { version: PROTOCOL_VERSION } = require("../package.json")
+const pkgVersion = require("../package.json").version
+const PROTOCOL_VERSION = pkgVersion.split(".").slice(0, 2).join(".")
 
 const { startPeerServer, stopPeerServer } = await import("../dist/peer-server.js")
 const { initDb } = await import("../dist/peer-db.js")
-const { signMessage, agentIdFromPublicKey } = await import("../dist/identity.js")
+const { agentIdFromPublicKey, signWithDomainSeparator, DOMAIN_SEPARATORS, signHttpRequest, canonicalize } = await import("../dist/identity.js")
 
 function makeKeypair() {
   const kp = nacl.sign.keyPair()
   const pubB64 = Buffer.from(kp.publicKey).toString("base64")
   const privB64 = Buffer.from(kp.secretKey.slice(0, 32)).toString("base64")
   const agentId = agentIdFromPublicKey(pubB64)
-  return { publicKey: pubB64, privateKey: privB64, agentId }
+  return { publicKey: pubB64, privateKey: privB64, secretKey: kp.secretKey, agentId }
 }
 
-function sign(privB64, payload) {
-  return signMessage(privB64, payload)
+async function sendSignedMessage(port, key, payload) {
+  const body = JSON.stringify(canonicalize(payload))
+  const identity = { agentId: key.agentId, privateKey: key.privateKey, publicKey: key.publicKey }
+  const awHeaders = signHttpRequest(identity, "POST", `[::1]:${port}`, "/peer/message", body)
+  return fetch(`http://[::1]:${port}/peer/message`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...awHeaders },
+    body,
+  })
+}
+
+function signRotation(secretKey, payload) {
+  return signWithDomainSeparator(DOMAIN_SEPARATORS.KEY_ROTATION, payload, secretKey)
 }
 
 function pubToMultibase(pubB64) {
@@ -50,10 +62,10 @@ function pubToMultibase(pubB64) {
   return `z${str}`
 }
 
-function makeProof(kid, privB64, signable) {
+function makeProof(kid, secretKey, signable) {
   const header = JSON.stringify({ alg: "EdDSA", kid })
   const protectedB64 = Buffer.from(header).toString("base64url")
-  return { protected: protectedB64, signature: sign(privB64, signable) }
+  return { protected: protectedB64, signature: signRotation(secretKey, signable) }
 }
 
 function makeRotationBody(oldKey, newKey, overrideProofOld) {
@@ -72,8 +84,8 @@ function makeRotationBody(oldKey, newKey, overrideProofOld) {
     newIdentity: { agentId: newKey.agentId, kid: "#identity", publicKeyMultibase: pubToMultibase(newKey.publicKey) },
     timestamp: signable.timestamp,
     proofs: {
-      signedByOld: makeProof("#identity", overrideProofOld ?? oldKey.privateKey, signable),
-      signedByNew: makeProof("#identity", newKey.privateKey, signable),
+      signedByOld: makeProof("#identity", overrideProofOld ?? oldKey.secretKey, signable),
+      signedByNew: makeProof("#identity", newKey.secretKey, signable),
     },
   }
 }
@@ -94,7 +106,7 @@ describe("key rotation endpoint", () => {
     fs.rmSync(tmpDir, { recursive: true })
   })
 
-  test("accepts valid v0.2 key rotation", async () => {
+  test("accepts valid key rotation", async () => {
     const oldKey = makeKeypair()
     const newKey = makeKeypair()
     const resp = await fetch(`http://[::1]:${port}/peer/key-rotation`, {
@@ -114,7 +126,7 @@ describe("key rotation endpoint", () => {
     const resp = await fetch(`http://[::1]:${port}/peer/key-rotation`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(makeRotationBody(oldKey, newKey, wrongKey.privateKey)),
+      body: JSON.stringify(makeRotationBody(oldKey, newKey, wrongKey.secretKey)),
     })
     assert.equal(resp.status, 403)
   })
@@ -138,8 +150,8 @@ describe("key rotation endpoint", () => {
       newIdentity: { agentId: newKey.agentId, kid: "#identity", publicKeyMultibase: pubToMultibase(newKey.publicKey) },
       timestamp: signable.timestamp,
       proofs: {
-        signedByOld: makeProof("#identity", oldKey.privateKey, signable),
-        signedByNew: makeProof("#identity", newKey.privateKey, signable),
+        signedByOld: makeProof("#identity", oldKey.secretKey, signable),
+        signedByNew: makeProof("#identity", newKey.secretKey, signable),
       },
     }
     const resp = await fetch(`http://[::1]:${port}/peer/key-rotation`, {
@@ -173,19 +185,16 @@ describe("key rotation endpoint", () => {
     const attackerKey = makeKeypair()
     const newKey = makeKeypair()
 
-    // Establish TOFU for tofuKey by sending a message
+    // Establish TOFU for tofuKey by sending a -signed message
     const msgPayload = {
       from: tofuKey.agentId,
       publicKey: tofuKey.publicKey,
       event: "ping",
       content: "hello",
       timestamp: Date.now(),
+      signature: signWithDomainSeparator(DOMAIN_SEPARATORS.MESSAGE, { from: tofuKey.agentId, publicKey: tofuKey.publicKey, event: "ping", content: "hello", timestamp: Date.now() }, tofuKey.secretKey),
     }
-    await fetch(`http://[::1]:${port}/peer/message`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...msgPayload, signature: sign(tofuKey.privateKey, msgPayload) }),
-    })
+    await sendSignedMessage(port, tofuKey, msgPayload)
 
     // Attacker claims tofuKey.agentId but provides attackerKey as oldPublicKey.
     // agentIdFromPublicKey(attackerKey) !== tofuKey.agentId → server rejects 400.
@@ -208,8 +217,8 @@ describe("key rotation endpoint", () => {
       newIdentity: { agentId: newKey.agentId, kid: "#identity", publicKeyMultibase: pubToMultibase(newKey.publicKey) },
       timestamp: signable.timestamp,
       proofs: {
-        signedByOld: makeProof("#identity", attackerKey.privateKey, signable),
-        signedByNew: makeProof("#identity", newKey.privateKey, signable),
+        signedByOld: makeProof("#identity", attackerKey.secretKey, signable),
+        signedByNew: makeProof("#identity", newKey.secretKey, signable),
       },
     }
     const resp = await fetch(`http://[::1]:${port}/peer/key-rotation`, {

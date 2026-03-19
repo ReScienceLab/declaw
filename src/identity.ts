@@ -6,10 +6,18 @@
  */
 import * as nacl from "tweetnacl"
 import { sha256 } from "@noble/hashes/sha256"
+import { createHash } from "node:crypto"
 import * as fs from "fs"
 import * as path from "path"
 import * as os from "os"
-import { Identity } from "./types"
+import { Identity, AwRequestHeaders, AwResponseHeaders } from "./types"
+
+// Protocol version for HTTP signatures and domain separators.
+// Uses major.minor from package.json — only changes on breaking protocol updates.
+// This MUST match the SDK's PROTOCOL_VERSION to allow cross-node signature verification.
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const pkgVersion: string = require("../package.json").version
+const PROTOCOL_VERSION = pkgVersion.split(".").slice(0, 2).join(".")
 
 // ── did:key mapping ─────────────────────────────────────────────────────────
 
@@ -119,6 +127,211 @@ export function verifySignature(
   } catch {
     return false
   }
+}
+
+// ── Domain-Separated Signatures ─────────────────────────────────────────────
+
+export const DOMAIN_SEPARATORS = {
+  HTTP_REQUEST: `AgentWorld-Req-${PROTOCOL_VERSION}\0`,
+  HTTP_RESPONSE: `AgentWorld-Res-${PROTOCOL_VERSION}\0`,
+  AGENT_CARD: `AgentWorld-Card-${PROTOCOL_VERSION}\0`,
+  KEY_ROTATION: `AgentWorld-Rotation-${PROTOCOL_VERSION}\0`,
+  ANNOUNCE: `AgentWorld-Announce-${PROTOCOL_VERSION}\0`,
+  MESSAGE: `AgentWorld-Message-${PROTOCOL_VERSION}\0`,
+  WORLD_STATE: `AgentWorld-WorldState-${PROTOCOL_VERSION}\0`,
+} as const
+
+export function signWithDomainSeparator(
+  domainSeparator: string,
+  payload: unknown,
+  secretKey: Uint8Array
+): string {
+  const canonicalJson = JSON.stringify(canonicalize(payload))
+  const domainPrefix = Buffer.from(domainSeparator, "utf8")
+  const payloadBytes = Buffer.from(canonicalJson, "utf8")
+  const message = Buffer.concat([domainPrefix, payloadBytes])
+  const sig = nacl.sign.detached(message, secretKey)
+  return Buffer.from(sig).toString("base64")
+}
+
+export function verifyWithDomainSeparator(
+  domainSeparator: string,
+  publicKeyB64: string,
+  payload: unknown,
+  signatureB64: string
+): boolean {
+  try {
+    const canonicalJson = JSON.stringify(canonicalize(payload))
+    const domainPrefix = Buffer.from(domainSeparator, "utf8")
+    const payloadBytes = Buffer.from(canonicalJson, "utf8")
+    const message = Buffer.concat([domainPrefix, payloadBytes])
+    const pubKey = Buffer.from(publicKeyB64, "base64")
+    const sig = Buffer.from(signatureB64, "base64")
+    return nacl.sign.detached.verify(message, sig, pubKey)
+  } catch {
+    return false
+  }
+}
+
+// ── AgentWorld HTTP header signing ──────────────────────────────────────────
+
+const MAX_CLOCK_SKEW_MS = 5 * 60 * 1000
+
+export function computeContentDigest(body: string): string {
+  const hash = createHash("sha256").update(Buffer.from(body, "utf8")).digest("base64")
+  return `sha-256=:${hash}:`
+}
+
+function buildRequestSigningInput(opts: {
+  v: string; from: string; kid: string; ts: string
+  method: string; authority: string; path: string; contentDigest: string
+}): Record<string, string> {
+  return {
+    v: opts.v,
+    from: opts.from,
+    kid: opts.kid,
+    ts: opts.ts,
+    method: opts.method.toUpperCase(),
+    authority: opts.authority,
+    path: opts.path,
+    contentDigest: opts.contentDigest,
+  }
+}
+
+function buildResponseSigningInput(opts: {
+  v: string; from: string; kid: string; ts: string
+  status: number; contentDigest: string
+}): Record<string, unknown> {
+  return {
+    v: opts.v,
+    from: opts.from,
+    kid: opts.kid,
+    ts: opts.ts,
+    status: opts.status,
+    contentDigest: opts.contentDigest,
+  }
+}
+
+export function signHttpRequest(
+  identity: Identity,
+  method: string,
+  authority: string,
+  reqPath: string,
+  body: string
+): AwRequestHeaders {
+  const privFull = nacl.sign.keyPair.fromSeed(Buffer.from(identity.privateKey, "base64"))
+  const ts = new Date().toISOString()
+  const kid = "#identity"
+  const contentDigest = computeContentDigest(body)
+  const signingInput = buildRequestSigningInput({
+    v: PROTOCOL_VERSION, from: identity.agentId, kid, ts, method, authority, path: reqPath, contentDigest,
+  })
+  const signature = signWithDomainSeparator(DOMAIN_SEPARATORS.HTTP_REQUEST, signingInput, privFull.secretKey)
+  return {
+    "X-AgentWorld-Version": PROTOCOL_VERSION,
+    "X-AgentWorld-From": identity.agentId,
+    "X-AgentWorld-KeyId": kid,
+    "X-AgentWorld-Timestamp": ts,
+    "Content-Digest": contentDigest,
+    "X-AgentWorld-Signature": signature,
+  }
+}
+
+export function verifyHttpRequestHeaders(
+  headers: Record<string, string | string[] | undefined>,
+  method: string,
+  reqPath: string,
+  authority: string,
+  body: string,
+  publicKeyB64: string
+): { ok: boolean; error?: string } {
+  const h: Record<string, string | string[] | undefined> = {}
+  for (const [k, v] of Object.entries(headers)) h[k.toLowerCase()] = v
+
+  const ver = h["x-agentworld-version"] as string | undefined
+  const sig = h["x-agentworld-signature"] as string | undefined
+  const from = h["x-agentworld-from"] as string | undefined
+  const kid = h["x-agentworld-keyid"] as string | undefined
+  const ts = h["x-agentworld-timestamp"] as string | undefined
+  const cd = h["content-digest"] as string | undefined
+
+  if (!ver || !sig || !from || !kid || !ts || !cd) {
+    return { ok: false, error: "Missing required AgentWorld headers" }
+  }
+
+  const tsDiff = Math.abs(Date.now() - new Date(ts).getTime())
+  if (isNaN(tsDiff) || tsDiff > MAX_CLOCK_SKEW_MS) {
+    return { ok: false, error: "X-AgentWorld-Timestamp outside acceptable skew window" }
+  }
+
+  const expectedDigest = computeContentDigest(body)
+  if (cd !== expectedDigest) {
+    return { ok: false, error: "Content-Digest mismatch" }
+  }
+
+  const signingInput = buildRequestSigningInput({
+    v: ver, from, kid, ts, method, authority, path: reqPath, contentDigest: cd,
+  })
+  const ok = verifyWithDomainSeparator(DOMAIN_SEPARATORS.HTTP_REQUEST, publicKeyB64, signingInput, sig)
+  return ok ? { ok: true } : { ok: false, error: "Invalid X-AgentWorld-Signature" }
+}
+
+export function signHttpResponse(
+  identity: Identity,
+  status: number,
+  body: string
+): AwResponseHeaders {
+  const privFull = nacl.sign.keyPair.fromSeed(Buffer.from(identity.privateKey, "base64"))
+  const ts = new Date().toISOString()
+  const kid = "#identity"
+  const contentDigest = computeContentDigest(body)
+  const signingInput = buildResponseSigningInput({
+    v: PROTOCOL_VERSION, from: identity.agentId, kid, ts, status, contentDigest,
+  })
+  const signature = signWithDomainSeparator(DOMAIN_SEPARATORS.HTTP_RESPONSE, signingInput, privFull.secretKey)
+  return {
+    "X-AgentWorld-Version": PROTOCOL_VERSION,
+    "X-AgentWorld-From": identity.agentId,
+    "X-AgentWorld-KeyId": kid,
+    "X-AgentWorld-Timestamp": ts,
+    "Content-Digest": contentDigest,
+    "X-AgentWorld-Signature": signature,
+  }
+}
+
+export function verifyHttpResponseHeaders(
+  headers: Record<string, string | null>,
+  status: number,
+  body: string,
+  publicKeyB64: string
+): { ok: boolean; error?: string } {
+  const h: Record<string, string | null> = {}
+  for (const [k, v] of Object.entries(headers)) h[k.toLowerCase()] = v
+
+  const ver = h["x-agentworld-version"]
+  const sig = h["x-agentworld-signature"]
+  const from = h["x-agentworld-from"]
+  const kid = h["x-agentworld-keyid"]
+  const ts = h["x-agentworld-timestamp"]
+  const cd = h["content-digest"]
+
+  if (!ver || !sig || !from || !kid || !ts || !cd) {
+    return { ok: false, error: "Missing required AgentWorld response headers" }
+  }
+
+  const tsDiff = Math.abs(Date.now() - new Date(ts).getTime())
+  if (isNaN(tsDiff) || tsDiff > MAX_CLOCK_SKEW_MS) {
+    return { ok: false, error: "X-AgentWorld-Timestamp outside acceptable skew window" }
+  }
+
+  const expectedDigest = computeContentDigest(body)
+  if (cd !== expectedDigest) {
+    return { ok: false, error: "Content-Digest mismatch" }
+  }
+
+  const signingInput = buildResponseSigningInput({ v: ver, from, kid, ts, status, contentDigest: cd })
+  const ok = verifyWithDomainSeparator(DOMAIN_SEPARATORS.HTTP_RESPONSE, publicKeyB64, signingInput, sig)
+  return ok ? { ok: true } : { ok: false, error: "Invalid X-AgentWorld-Signature" }
 }
 
 // ── Utility ─────────────────────────────────────────────────────────────────

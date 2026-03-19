@@ -9,12 +9,11 @@
  * application layer via Ed25519 signatures, not at the network layer.
  */
 import Fastify, { FastifyInstance } from "fastify"
-import { createHash } from "node:crypto"
-import * as nacl from "tweetnacl"
-import { P2PMessage, Endpoint } from "./types"
-import { verifySignature, agentIdFromPublicKey, canonicalize } from "./identity"
+import { P2PMessage, Identity, Endpoint } from "./types"
+import { agentIdFromPublicKey, verifyHttpRequestHeaders, signHttpResponse as signHttpResponseFn, DOMAIN_SEPARATORS, verifyWithDomainSeparator } from "./identity"
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const { version: PROTOCOL_VERSION } = require("../package.json")
+const pkgVersion: string = require("../package.json").version
+const PROTOCOL_VERSION = pkgVersion.split(".").slice(0, 2).join(".")
 import { tofuVerifyAndCache, tofuReplaceKey, getPeersForExchange, upsertDiscoveredPeer, removePeer, getPeer } from "./peer-db"
 
 const MAX_MESSAGE_AGE_MS = 5 * 60 * 1000 // 5 minutes
@@ -25,8 +24,7 @@ let server: FastifyInstance | null = null
 const _inbox: (P2PMessage & { verified: boolean; receivedAt: number })[] = []
 const _handlers: MessageHandler[] = []
 
-// Identity for response signing (set at startup)
-let _signingKey: { agentId: string; secretKey: Uint8Array } | null = null
+let _identity: Identity | null = null
 
 interface SelfMeta {
   agentId?: string
@@ -41,7 +39,7 @@ export interface PeerServerOptions {
   /** If true, disables startup delays for tests */
   testMode?: boolean
   /** Identity for response signing (optional) */
-  identity?: { agentId: string; publicKey: string; privateKey: string }
+  identity?: Identity
 }
 
 export function setSelfMeta(meta: SelfMeta): void {
@@ -63,58 +61,37 @@ function canonical(msg: P2PMessage): Record<string, unknown> {
   }
 }
 
-function computeContentDigest(body: string): string {
-  const hash = createHash("sha256").update(Buffer.from(body, "utf8")).digest("base64")
-  return `sha-256=:${hash}:`
-}
-
-function signResponse(status: number, bodyStr: string): Record<string, string> | null {
-  if (!_signingKey) return null
-  const ts = new Date().toISOString()
-  const kid = "#identity"
-  const contentDigest = computeContentDigest(bodyStr)
-  const signingInput = canonicalize({
-    v: PROTOCOL_VERSION,
-    from: _signingKey.agentId,
-    kid,
-    ts,
-    status,
-    contentDigest,
-  })
-  const sig = nacl.sign.detached(
-    Buffer.from(JSON.stringify(signingInput)),
-    _signingKey.secretKey
-  )
-  return {
-    "X-AgentWorld-Version": PROTOCOL_VERSION,
-    "X-AgentWorld-From": _signingKey.agentId,
-    "X-AgentWorld-KeyId": kid,
-    "X-AgentWorld-Timestamp": ts,
-    "Content-Digest": contentDigest,
-    "X-AgentWorld-Signature": Buffer.from(sig).toString("base64"),
-  }
-}
-
 export async function startPeerServer(port: number = 8099, opts?: PeerServerOptions): Promise<void> {
   if (opts?.identity) {
-    const privBytes = Buffer.from(opts.identity.privateKey, "base64")
-    const fullKey = nacl.sign.keyPair.fromSeed(privBytes)
-    _signingKey = { agentId: opts.identity.agentId, secretKey: fullKey.secretKey }
+    _identity = opts.identity
   }
 
   server = Fastify({ logger: false })
 
-  // Sign all /peer/* JSON responses (P2a — AgentWorld v0.2 response signing)
+  // Preserve raw body string for Content-Digest verification
+  server.decorateRequest("rawBody", "")
+  server.addContentTypeParser(
+    "application/json",
+    { parseAs: "string" },
+    (req, body, done) => {
+      try {
+        ;(req as any).rawBody = body as string
+        done(null, JSON.parse(body as string))
+      } catch (err) {
+        done(err as Error, undefined)
+      }
+    }
+  )
+
+  // Sign all /peer/* JSON responses
   server.addHook("onSend", async (_req, reply, payload) => {
-    if (!_signingKey || typeof payload !== "string") return payload
+    if (!_identity || typeof payload !== "string") return payload
     const url = ((_req as any).url ?? "").split("?")[0] as string
     if (!url.startsWith("/peer/")) return payload
     const ct = reply.getHeader("content-type") as string | undefined
     if (!ct || !ct.includes("application/json")) return payload
-    const hdrs = signResponse(reply.statusCode, payload)
-    if (hdrs) {
-      for (const [k, v] of Object.entries(hdrs)) reply.header(k, v)
-    }
+    const hdrs = signHttpResponseFn(_identity, reply.statusCode, payload)
+    for (const [k, v] of Object.entries(hdrs)) reply.header(k, v)
     return payload
   })
 
@@ -125,15 +102,25 @@ export async function startPeerServer(port: number = 8099, opts?: PeerServerOpti
   server.post("/peer/announce", async (req, reply) => {
     const ann = req.body as any
 
-    const { signature, ...signable } = ann
-    if (!verifySignature(ann.publicKey, signable as Record<string, unknown>, signature)) {
-      return reply.code(403).send({ error: "Invalid announcement signature" })
+    if (!ann?.publicKey || !ann?.from) {
+      return reply.code(400).send({ error: "Missing 'from' or 'publicKey'" })
+    }
+
+    // Verify X-AgentWorld-* header signature
+    const rawBody = (req as any).rawBody as string
+    const authority = (req.headers["host"] as string) ?? "localhost"
+    const reqPath = req.url.split("?")[0]
+    const result = verifyHttpRequestHeaders(
+      req.headers as Record<string, string>,
+      req.method, reqPath, authority, rawBody, ann.publicKey
+    )
+    if (!result.ok) return reply.code(403).send({ error: result.error })
+    const headerFrom = req.headers["x-agentworld-from"] as string
+    if (headerFrom !== ann.from) {
+      return reply.code(400).send({ error: "X-AgentWorld-From does not match body 'from'" })
     }
 
     const agentId: string = ann.from
-    if (!agentId) {
-      return reply.code(400).send({ error: "Missing 'from' (agentId)" })
-    }
 
     const knownPeer = getPeer(agentId)
     if (!knownPeer?.publicKey && agentIdFromPublicKey(ann.publicKey) !== agentId) {
@@ -174,15 +161,25 @@ export async function startPeerServer(port: number = 8099, opts?: PeerServerOpti
   server.post("/peer/message", async (req, reply) => {
     const raw = req.body as any
 
-    const sigData = canonical(raw)
-    if (!verifySignature(raw.publicKey, sigData, raw.signature)) {
-      return reply.code(403).send({ error: "Invalid Ed25519 signature" })
+    if (!raw?.publicKey || !raw?.from) {
+      return reply.code(400).send({ error: "Missing 'from' or 'publicKey'" })
+    }
+
+    // Verify X-AgentWorld-* header signature
+    const rawBody = (req as any).rawBody as string
+    const authority = (req.headers["host"] as string) ?? "localhost"
+    const reqPath = req.url.split("?")[0]
+    const result = verifyHttpRequestHeaders(
+      req.headers as Record<string, string>,
+      req.method, reqPath, authority, rawBody, raw.publicKey
+    )
+    if (!result.ok) return reply.code(403).send({ error: result.error })
+    const headerFrom = req.headers["x-agentworld-from"] as string
+    if (headerFrom !== raw.from) {
+      return reply.code(400).send({ error: "X-AgentWorld-From does not match body 'from'" })
     }
 
     const agentId: string = raw.from
-    if (!agentId) {
-      return reply.code(400).send({ error: "Missing 'from' (agentId)" })
-    }
 
     const knownPeer = getPeer(agentId)
     if (!knownPeer?.publicKey && agentIdFromPublicKey(raw.publicKey) !== agentId) {
@@ -224,6 +221,8 @@ export async function startPeerServer(port: number = 8099, opts?: PeerServerOpti
     return { ok: true }
   })
 
+  // TODO: transport-level header signing for /peer/key-rotation is deferred —
+  // rotation uses its own dual-signature proof structure (signedByOld + signedByNew)
   server.post("/peer/key-rotation", async (req, reply) => {
     const rot = req.body as any
 
@@ -263,11 +262,11 @@ export async function startPeerServer(port: number = 8099, opts?: PeerServerOpti
       timestamp,
     }
 
-    if (!verifySignature(oldPublicKeyB64, signable, rot.proofs.signedByOld.signature)) {
+    if (!verifyWithDomainSeparator(DOMAIN_SEPARATORS.KEY_ROTATION, oldPublicKeyB64, signable, rot.proofs.signedByOld.signature)) {
       return reply.code(403).send({ error: "Invalid signatureByOldKey" })
     }
 
-    if (!verifySignature(newPublicKeyB64, signable, rot.proofs.signedByNew.signature)) {
+    if (!verifyWithDomainSeparator(DOMAIN_SEPARATORS.KEY_ROTATION, newPublicKeyB64, signable, rot.proofs.signedByNew.signature)) {
       return reply.code(403).send({ error: "Invalid signatureByNewKey" })
     }
 
@@ -292,7 +291,7 @@ export async function stopPeerServer(): Promise<void> {
     await server.close()
     server = null
   }
-  _signingKey = null
+  _identity = null
 }
 
 export function getInbox(): typeof _inbox {
@@ -324,8 +323,8 @@ export function handleUdpMessage(data: Buffer, from: string): boolean {
     return false
   }
 
-  const sigData = canonical(raw)
-  if (!verifySignature(raw.publicKey, sigData, raw.signature)) {
+  const { signature, ...signable } = raw
+  if (!verifyWithDomainSeparator(DOMAIN_SEPARATORS.MESSAGE, raw.publicKey, signable, signature)) {
     return false
   }
 

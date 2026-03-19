@@ -1,6 +1,7 @@
 node_modules/
 dist/
 *.js.map
+*.tsbuildinfo
 .env
 *.db
 *.db-journal

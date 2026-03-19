@@ -425,17 +425,19 @@ export default function register(api: any) {
       properties: {
         agent_id: { type: "string", description: "The recipient's agent ID" },
         message: { type: "string", description: "The message content to send" },
+        event: { type: "string", description: "Message event type (default 'chat'). Use 'world.join' to join a world." },
         port: { type: "integer", description: "Recipient's P2P server port (default 8099)" },
       },
       required: ["agent_id", "message"],
     },
-    async execute(_id: string, params: { agent_id: string; message: string; port?: number }) {
+    async execute(_id: string, params: { agent_id: string; message: string; event?: string; port?: number }) {
       if (!identity) {
         return { content: [{ type: "text", text: "Error: P2P service not started yet." }] }
       }
-      const result = await sendP2PMessage(identity, params.agent_id, "chat", params.message, params.port ?? 8099, 10_000, buildSendOpts(params.agent_id))
+      const event = params.event ?? "chat"
+      const result = await sendP2PMessage(identity, params.agent_id, event, params.message, params.port ?? 8099, 10_000, buildSendOpts(params.agent_id))
       if (result.ok) {
-        return { content: [{ type: "text", text: `Message delivered to ${params.agent_id}` }] }
+        return { content: [{ type: "text", text: `Message delivered to ${params.agent_id} (event: ${event})` }] }
       }
       return { content: [{ type: "text", text: `Failed to deliver: ${result.error}` }], isError: true }
     },

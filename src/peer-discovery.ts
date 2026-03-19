@@ -10,7 +10,7 @@
  */
 
 import { Identity, Endpoint } from "./types"
-import { signMessage, agentIdFromPublicKey } from "./identity"
+import { signMessage, agentIdFromPublicKey, signHttpRequest } from "./identity"
 import { listPeers, upsertDiscoveredPeer, getPeersForExchange, pruneStale } from "./peer-db"
 
 const BOOTSTRAP_JSON_URL =
@@ -107,30 +107,32 @@ export async function announceToNode(
   identity: Identity,
   targetAddr: string,
   port: number = 8099,
-  meta: { name?: string; version?: string; endpoints?: Endpoint[] } = {}
+  meta: { name?: string; version?: string; endpoints?: Endpoint[]; capabilities?: string[] } = {}
 ): Promise<Array<{
   agentId: string
   publicKey: string
   alias?: string
   lastSeen: number
   endpoints?: Endpoint[]
+  capabilities?: string[]
 }> | null> {
   const payload = buildAnnouncement(identity, meta)
   const signature = signMessage(identity.privateKey, payload)
   const announcement = { ...payload, signature }
 
   const isIpv6 = targetAddr.includes(":") && !targetAddr.includes(".")
-  const url = isIpv6
-    ? `http://[${targetAddr}]:${port}/peer/announce`
-    : `http://${targetAddr}:${port}/peer/announce`
+  const host = isIpv6 ? `[${targetAddr}]:${port}` : `${targetAddr}:${port}`
+  const url = `http://${host}/peer/announce`
+  const reqBody = JSON.stringify(announcement)
+  const awHeaders = signHttpRequest(identity, "POST", host, "/peer/announce", reqBody)
 
   try {
     const ctrl = new AbortController()
     const timer = setTimeout(() => ctrl.abort(), EXCHANGE_TIMEOUT_MS)
     const resp = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(announcement),
+      headers: { "Content-Type": "application/json", ...awHeaders },
+      body: reqBody,
       signal: ctrl.signal,
     })
     clearTimeout(timer)
@@ -143,7 +145,7 @@ export async function announceToNode(
 
     const body = await resp.json() as {
       ok: boolean
-      self?: { agentId?: string; publicKey?: string; alias?: string; version?: string; endpoints?: Endpoint[] }
+      self?: { agentId?: string; publicKey?: string; alias?: string; version?: string; endpoints?: Endpoint[]; capabilities?: string[] }
       peers?: any[]
     }
 
@@ -154,6 +156,7 @@ export async function announceToNode(
         discoveredVia: body.self.agentId,
         source: "gossip",
         endpoints: body.self.endpoints,
+        capabilities: body.self.capabilities,
       })
     }
 
@@ -163,6 +166,7 @@ export async function announceToNode(
       alias: p.alias,
       lastSeen: p.lastSeen,
       endpoints: p.endpoints ?? [],
+      capabilities: p.capabilities ?? [],
     })).filter((p: any) => p.agentId)
   } catch (err: any) {
     console.warn(`[p2p:discovery] Announce to ${targetAddr.slice(0, 20)}... error: ${err?.message}`)
@@ -174,7 +178,7 @@ export async function bootstrapDiscovery(
   identity: Identity,
   port: number = 8099,
   extraBootstrap: string[] | BootstrapNode[] = [],
-  meta: { name?: string; version?: string; endpoints?: Endpoint[] } = {}
+  meta: { name?: string; version?: string; endpoints?: Endpoint[]; capabilities?: string[] } = {}
 ): Promise<number> {
   const remoteNodes = await fetchRemoteBootstrapPeers()
   const normalizedExtra: BootstrapNode[] = (extraBootstrap as any[]).map((e) =>
@@ -224,6 +228,7 @@ export async function bootstrapDiscovery(
         source: "bootstrap",
         lastSeen: p.lastSeen,
         endpoints: p.endpoints,
+        capabilities: p.capabilities,
       })
       const peerAddr = reachableAddr(p)
       if (peerAddr) fanoutCandidates.push({ addr: peerAddr })
@@ -246,6 +251,7 @@ export async function bootstrapDiscovery(
             source: "gossip",
             lastSeen: p.lastSeen,
             endpoints: p.endpoints,
+            capabilities: p.capabilities,
           })
         }
       })
@@ -261,7 +267,7 @@ export function startDiscoveryLoop(
   port: number = 8099,
   intervalMs: number = 10 * 60 * 1000,
   extraBootstrap: string[] | BootstrapNode[] = [],
-  meta: { name?: string; version?: string; endpoints?: Endpoint[] } = {}
+  meta: { name?: string; version?: string; endpoints?: Endpoint[]; capabilities?: string[] } = {}
 ): void {
   if (_discoveryTimer) return
 
@@ -290,6 +296,7 @@ export function startDiscoveryLoop(
           discoveredVia: peer.agentId,
           source: "gossip",
           endpoints: peer.endpoints,
+          capabilities: peer.capabilities,
         })
         for (const p of received) {
           if (p.agentId === identity.agentId) continue
@@ -299,6 +306,7 @@ export function startDiscoveryLoop(
             source: "gossip",
             lastSeen: p.lastSeen,
             endpoints: p.endpoints,
+            capabilities: p.capabilities,
           })
           updated++
         }
