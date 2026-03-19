@@ -1,5 +1,6 @@
 ---
 "@resciencelab/dap": minor
+"@resciencelab/agent-world-sdk": minor
 ---
 
 feat: add world type system — programmatic and hosted world modes
