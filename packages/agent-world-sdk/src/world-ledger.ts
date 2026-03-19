@@ -27,8 +27,8 @@ export class WorldLedger {
   public corruptedLines = 0
 
   constructor(dataDir: string, worldId: string, identity: Identity) {
-    const safeId = worldId.replace(/[^a-zA-Z0-9_-]/g, "_")
-    this.filePath = path.join(dataDir, `world-ledger-${safeId}.jsonl`)
+    const hash = crypto.createHash("sha256").update(worldId).digest("hex").slice(0, 16)
+    this.filePath = path.join(dataDir, `world-ledger-${hash}.jsonl`)
     this.identity = identity
     this.worldId = worldId
     this.load()

@@ -1,5 +1,6 @@
 import { describe, it, beforeEach, afterEach } from "node:test"
 import assert from "node:assert/strict"
+import crypto from "node:crypto"
 import fs from "fs"
 import path from "path"
 import os from "os"
@@ -86,7 +87,8 @@ describe("WorldLedger", () => {
     ledger1.append("world.join", "aw:sha256:a1", "Bot1")
 
     // Tamper with the file: change the alias in the second line
-    const filePath = path.join(tmpDir, "world-ledger-test-world.jsonl")
+    const hash = crypto.createHash("sha256").update("test-world").digest("hex").slice(0, 16)
+    const filePath = path.join(tmpDir, `world-ledger-${hash}.jsonl`)
     const lines = fs.readFileSync(filePath, "utf8").trim().split("\n")
     const entry = JSON.parse(lines[1])
     entry.alias = "TAMPERED"
@@ -215,7 +217,8 @@ describe("WorldLedger", () => {
     assert.equal(ledger1.length, 2)
 
     // Append a corrupted line to the file
-    const filePath = path.join(tmpDir, "world-ledger-test-world.jsonl")
+    const hash = crypto.createHash("sha256").update("test-world").digest("hex").slice(0, 16)
+    const filePath = path.join(tmpDir, `world-ledger-${hash}.jsonl`)
     fs.appendFileSync(filePath, '{"broken":true, invalid json\n')
 
     const ledger2 = new WorldLedger(tmpDir, "test-world", identity)
@@ -251,5 +254,15 @@ describe("WorldLedger", () => {
     const restarted = ledger.getAgentSummaries(empty)
     assert.equal(restarted.find(s => s.agentId === a1).online, false)
     assert.equal(restarted.find(s => s.agentId === a2).online, false)
+  })
+
+  it("uses collision-resistant filenames for different worldIds", () => {
+    const l1 = new WorldLedger(tmpDir, "foo/bar", identity)
+    const l2 = new WorldLedger(tmpDir, "foo:bar", identity)
+    l1.append("world.join", "aw:sha256:a1", "Alpha")
+
+    // l2 should have only its own genesis — not l1's join event
+    assert.equal(l2.length, 1)
+    assert.equal(l2.getEntries()[0].event, "world.genesis")
   })
 })
