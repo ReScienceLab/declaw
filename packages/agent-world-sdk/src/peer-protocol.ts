@@ -34,7 +34,7 @@ export interface PeerProtocolOpts {
 }
 
 /**
- * Register DAP peer protocol routes on a Fastify instance:
+ * Register AWN peer protocol routes on a Fastify instance:
  *   GET  /peer/ping
  *   GET  /peer/peers
  *   POST /peer/announce

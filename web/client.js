@@ -1,6 +1,6 @@
 /**
  * Agent Worlds Playground — client
- * Polls the Gateway /worlds endpoint to discover live worlds on the DAP network.
+ * Polls the Gateway /worlds endpoint to discover live worlds on the AWN network.
  */
 
 const GATEWAY = window.GATEWAY_URL || `${location.protocol}//${location.hostname}:8100`;
@@ -120,7 +120,7 @@ window.connectToWorld = function(worldId) {
   alert(
     "Connect to world: " + worldId + "\n\n" +
     "WebSocket: " + GATEWAY.replace("http", "ws") + "/ws?world=" + worldId + "\n\n" +
-    "Use the DAP OpenClaw plugin:\n" +
+    "Use the AWN OpenClaw plugin:\n" +
     "  p2p_discover() -> join_world(\"" + worldId + "\")"
   );
 };

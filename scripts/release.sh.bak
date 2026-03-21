@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# DAP — release script (creates Release PR)
+# AWN — release script (creates Release PR)
 # Usage:
 #   bash scripts/release.sh patch    # 0.2.2 → 0.2.3
 #   bash scripts/release.sh minor    # 0.2.2 → 0.3.0
@@ -18,7 +18,7 @@ if [[ "$LEVEL" != "patch" && "$LEVEL" != "minor" && "$LEVEL" != "major" ]]; then
   exit 1
 fi
 
-echo "=== DAP Release (${LEVEL}) ==="
+echo "=== AWN Release (${LEVEL}) ==="
 
 # ── 0. Preflight ─────────────────────────────────────────────────────────────
 
@@ -55,9 +55,9 @@ VERSION=$(npm version "$LEVEL" --no-git-tag-version | tr -d 'v')
 echo "New version: ${VERSION}"
 
 sed -i '' "s/\"version\": \"[^\"]*\"/\"version\": \"${VERSION}\"/" openclaw.plugin.json
-sed -i '' "s/^version: .*/version: ${VERSION}/" skills/dap/SKILL.md
+sed -i '' "s/^version: .*/version: ${VERSION}/" skills/awn/SKILL.md
 
-echo "Version synced: package.json, openclaw.plugin.json, skills/dap/SKILL.md"
+echo "Version synced: package.json, openclaw.plugin.json, skills/awn/SKILL.md"
 
 # ── 3. Changelog check ───────────────────────────────────────────────────────
 
@@ -68,7 +68,7 @@ if ! grep -q "\[${VERSION}\]" CHANGELOG.md; then
   echo
   if [[ ! "$REPLY" =~ ^[Yy]$ ]]; then
     echo "Aborting. Update CHANGELOG.md and re-run."
-    git checkout -- package.json package-lock.json openclaw.plugin.json skills/dap/SKILL.md
+    git checkout -- package.json package-lock.json openclaw.plugin.json skills/awn/SKILL.md
     exit 1
   fi
 fi
@@ -91,7 +91,7 @@ PR_URL=$(gh pr create \
 ### Version bump
 - \`package.json\` → ${VERSION}
 - \`openclaw.plugin.json\` → ${VERSION}
-- \`skills/dap/SKILL.md\` → ${VERSION}
+- \`skills/awn/SKILL.md\` → ${VERSION}
 
 ### What happens on merge
 CI (\`.github/workflows/release.yml\`) will automatically:

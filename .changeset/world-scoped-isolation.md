@@ -1,5 +1,5 @@
 ---
-"@resciencelab/dap": minor
+"@resciencelab/agent-world-network": minor
 ---
 
 feat!: world-scoped agent isolation — remove global peer gossip

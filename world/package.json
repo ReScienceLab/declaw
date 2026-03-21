@@ -1,8 +1,8 @@
 {
-  "name": "dap-world-agent",
+  "name": "awn-world-agent",
   "version": "1.0.0",
   "type": "module",
-  "description": "DAP World Agent — standalone deployable world server",
+  "description": "AWN World Agent — standalone deployable world server",
   "main": "server.mjs",
   "scripts": {
     "start": "node server.mjs"

@@ -95,7 +95,7 @@ describe("key rotation endpoint", () => {
   let tmpDir
 
   before(async () => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "dap-kr-test-"))
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "awn-kr-test-"))
     initDb(tmpDir)
     port = 18099
     await startPeerServer(port, { testMode: true })

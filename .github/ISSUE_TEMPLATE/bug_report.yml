@@ -1,5 +1,5 @@
 name: Bug Report
-description: Report a bug in DAP
+description: Report a bug in AWN
 title: "[Bug]: "
 labels: ["bug"]
 body:
@@ -22,8 +22,8 @@ body:
       label: Steps to Reproduce
       description: How can we reproduce the issue?
       placeholder: |
-        1. Start OpenClaw with DAP plugin
-        2. Run `p2p status`
+        1. Start OpenClaw with AWN plugin
+        2. Run `awn status`
         3. See error...
     validations:
       required: true
@@ -47,9 +47,9 @@ body:
   - type: input
     id: version
     attributes:
-      label: DAP Version
-      description: "Run: npm list @resciencelab/dap"
-      placeholder: "0.2.2"
+      label: AWN Version
+      description: "Run: npm list @resciencelab/agent-world-network"
+      placeholder: "0.5.0"
     validations:
       required: true
 

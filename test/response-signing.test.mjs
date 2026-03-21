@@ -75,7 +75,7 @@ describe("P2a — response signing on /peer/* endpoints", () => {
   let selfKey
 
   before(async () => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "dap-rsig-"))
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "awn-rsig-"))
     initDb(tmpDir)
     selfKey = makeKeypair()
     await startPeerServer(PORT, { testMode: true, identity: { agentId: selfKey.agentId, publicKey: selfKey.publicKey, privateKey: selfKey.privateKey } })

@@ -1,7 +1,7 @@
 {
-  "name": "@resciencelab/dap",
+  "name": "@resciencelab/agent-world-network",
   "version": "0.5.0",
-  "description": "Direct encrypted P2P communication between OpenClaw instances",
+  "description": "Agent World Network — world-scoped agent discovery and communication for OpenClaw",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
@@ -16,18 +16,18 @@
       "./dist/index.js"
     ],
     "channel": {
-      "id": "dap",
-      "label": "DAP",
-      "selectionLabel": "DAP (P2P)",
-      "docsPath": "/channels/dap",
-      "blurb": "Direct encrypted P2P messaging. No servers, no middlemen.",
+      "id": "awn",
+      "label": "AWN",
+      "selectionLabel": "AWN (Agent World Network)",
+      "docsPath": "/channels/awn",
+      "blurb": "Agent World Network — world-scoped agent communication.",
       "order": 90,
       "aliases": [
         "p2p"
       ]
     },
     "install": {
-      "npmSpec": "@resciencelab/dap",
+      "npmSpec": "@resciencelab/agent-world-network",
       "defaultChoice": "npm"
     }
   },

@@ -62,7 +62,7 @@ describe("Transport enforcement — world-scoped isolation", () => {
   let selfKey, memberKey, strangerKey, tmpDir
 
   before(async () => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "dap-enforce-"))
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "awn-enforce-"))
     initDb(tmpDir)
     selfKey = makeIdentity()
     memberKey = makeIdentity()

@@ -1,10 +1,10 @@
 /**
- * DAP World Agent — standalone deployable world server.
+ * AWN World Agent — standalone deployable world server.
  * No OpenClaw dependency. Runs on plain HTTP/TCP.
  *
  * Endpoints (provided by agent-world-sdk):
  *   GET  /peer/ping        — health check
- *   GET  /peer/peers       — known DAP peers
+ *   GET  /peer/peers       — known AWN peers
  *   POST /peer/announce    — accept signed peer announcement
  *   POST /peer/message     — receive world.join / world.action / world.leave
  *   GET  /world/state      — current world snapshot (HTTP poll)
@@ -13,13 +13,13 @@
  *   WORLD_ID      — unique world identifier, e.g. "pixel-city" (required)
  *   WORLD_NAME    — human-readable name, e.g. "Pixel City"
  *   WORLD_THEME   — theme tag, e.g. "city" | "dungeon" | "space"
- *   PEER_PORT     — DAP HTTP port (default 8099)
- *   PUBLIC_PORT   — externally reachable port for DAP announce (default PEER_PORT)
+ *   PEER_PORT     — AWN HTTP port (default 8099)
+ *   PUBLIC_PORT   — externally reachable port for AWN announce (default PEER_PORT)
  *   DATA_DIR      — persistence directory (default /data)
  *   BOOTSTRAP_URL — URL of bootstrap.json (default GitHub Pages)
  *   BROADCAST_INTERVAL_MS — how often to broadcast world.state (default 5000)
  *   MAX_AGENTS    — max agents allowed in world (default 0 = unlimited)
- *   WORLD_PUBLIC  — whether to announce to DAP network (default "true")
+ *   WORLD_PUBLIC  — whether to announce to AWN network (default "true")
  *   WORLD_PASSWORD — password required to join (default "" = no password)
  */
 import { createWorldServer } from "@resciencelab/agent-world-sdk"

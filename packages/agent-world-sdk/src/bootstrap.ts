@@ -9,7 +9,7 @@ import type { BootstrapNode, Identity } from "./types.js";
 import type { PeerDb } from "./peer-db.js";
 
 const DEFAULT_BOOTSTRAP_URL =
-  "https://resciencelab.github.io/DAP/bootstrap.json";
+  "https://resciencelab.github.io/agent-world-network/bootstrap.json";
 
 export async function fetchBootstrapNodes(
   url = DEFAULT_BOOTSTRAP_URL

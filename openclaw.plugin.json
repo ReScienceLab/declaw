@@ -1,13 +1,13 @@
 {
-  "id": "dap",
-  "name": "DAP",
-  "description": "Direct encrypted P2P communication between OpenClaw instances",
+  "id": "awn",
+  "name": "Agent World Network",
+  "description": "Agent World Network — world-scoped agent discovery and communication for OpenClaw",
   "version": "0.5.0",
   "channels": [
-    "dap"
+    "awn"
   ],
   "skills": [
-    "./skills/dap"
+    "./skills/awn"
   ],
   "configSchema": {
     "type": "object",
@@ -37,7 +37,7 @@
       },
       "data_dir": {
         "type": "string",
-        "description": "Directory to store identity and peer data (default: ~/.openclaw/dap)"
+        "description": "Directory to store identity and peer data (default: ~/.openclaw/awn)"
       },
       "tofu_ttl_days": {
         "type": "integer",

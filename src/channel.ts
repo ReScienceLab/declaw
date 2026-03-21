@@ -1,5 +1,5 @@
 /**
- * OpenClaw channel registration for DAP P2P messaging.
+ * OpenClaw channel registration for AWN (Agent World Network) messaging.
  * Account IDs are agentIds.
  */
 import { Identity } from "./types"
@@ -39,13 +39,13 @@ export const CHANNEL_CONFIG_SCHEMA = {
 
 export function buildChannel(identity: Identity, port: number, getSendOpts?: (id: string) => SendOptions) {
   return {
-    id: "dap",
+    id: "awn",
     meta: {
-      id: "dap",
-      label: "DAP",
-      selectionLabel: "DAP (P2P)",
-      docsPath: "/channels/dap",
-      blurb: "Direct encrypted P2P messaging. No servers, no middlemen.",
+      id: "awn",
+      label: "AWN",
+      selectionLabel: "AWN (Agent World Network)",
+      docsPath: "/channels/awn",
+      blurb: "Agent World Network — world-scoped agent communication.",
       aliases: ["p2p"],
     },
     capabilities: { chatTypes: ["direct"] },
@@ -69,7 +69,7 @@ export function buildChannel(identity: Identity, port: number, getSendOpts?: (id
         const opts = getSendOpts?.(agentId)
         const result = await sendP2PMessage(identity, agentId, "chat", text, port, 10_000, opts)
         if (!result.ok) {
-          console.error(`[dap] Failed to send to ${agentId}: ${result.error}`)
+          console.error(`[awn] Failed to send to ${agentId}: ${result.error}`)
         }
         return { ok: result.ok }
       },
@@ -82,13 +82,13 @@ export function wireInboundToGateway(api: any): void {
     if (msg.event !== "chat") return
     try {
       api.gateway?.receiveChannelMessage?.({
-        channelId: "dap",
+        channelId: "awn",
         accountId: msg.from,
         text: msg.content,
         senderId: msg.from,
       })
     } catch {
-      console.log(`[dap] Message from ${msg.from}: ${msg.content}`)
+      console.log(`[awn] Message from ${msg.from}: ${msg.content}`)
     }
   })
 }

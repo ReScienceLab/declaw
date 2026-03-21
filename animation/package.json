@@ -1,10 +1,10 @@
 {
-  "name": "dap-animation",
+  "name": "awn-animation",
   "version": "1.0.0",
   "private": true,
   "scripts": {
     "start": "npx remotion studio src/index.tsx",
-    "render": "npx remotion render src/index.tsx DAPDemo ../assets/demo-animation.mp4 --codec=h264"
+    "render": "npx remotion render src/index.tsx AWNDemo ../assets/demo-animation.mp4 --codec=h264"
   },
   "dependencies": {
     "@remotion/cli": "4.0.290",

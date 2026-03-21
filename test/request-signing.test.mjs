@@ -61,7 +61,7 @@ describe("request signing", () => {
   before(async () => {
     selfKey = makeIdentity()
     senderKey = makeIdentity()
-    dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "dap-reqsign-"))
+    dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "awn-reqsign-"))
     initDb(dataDir)
     await startPeerServer(PORT, { identity: selfKey, testMode: true })
     addWorldMembers("test-world", [senderKey.agentId])

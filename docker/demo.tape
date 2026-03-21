@@ -1,4 +1,4 @@
-# DAP demo — agent-to-agent P2P over plain HTTP/TCP
+# AWN demo — agent-to-agent P2P over plain HTTP/TCP
 # Generates: assets/demo.gif
 # Usage: vhs docker/demo.tape
 
@@ -23,7 +23,7 @@ Set LoopOffset    50%
 
 # ── cd to project root (hidden) ───────────────────────────────────────────────
 Hide
-Type "cd /Users/yilin/Developer/ReScienceLab/DAP"
+Type "cd /Users/yilin/Developer/ReScienceLab/agent-world-network"
 Enter
 Sleep 300ms
 Show

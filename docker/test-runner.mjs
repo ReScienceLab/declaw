@@ -91,7 +91,7 @@ if (ROLE === "client") {
     identity,
     PEER_ADDR,
     "chat",
-    "Hello from DAP Docker test!",
+    "Hello from AWN Docker test!",
     PORT
   );
 

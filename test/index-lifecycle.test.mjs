@@ -172,7 +172,7 @@ function createHarness({
   const api = new Proxy({
     config: {
       identity: { name: "Tester" },
-      plugins: { entries: { dap: { config: { data_dir: "/tmp/dap-test" } } } },
+      plugins: { entries: { awn: { config: { data_dir: "/tmp/awn-test" } } } },
     },
     gateway: {
       receiveChannelMessage(message) {

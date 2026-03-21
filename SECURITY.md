@@ -14,7 +14,7 @@
 Instead, report vulnerabilities privately:
 
 1. **Email**: Send details to the maintainers via the [ReScienceLab organization](https://github.com/ReScienceLab) contact
-2. **GitHub**: Use [private vulnerability reporting](https://github.com/ReScienceLab/DAP/security/advisories/new)
+2. **GitHub**: Use [private vulnerability reporting](https://github.com/ReScienceLab/agent-world-network/security/advisories/new)
 
 ### What to Include
 
@@ -31,7 +31,7 @@ Instead, report vulnerabilities privately:
 
 ## Security Model
 
-DAP uses a 3-layer trust model:
+AWN uses a 3-layer trust model:
 
 1. **Application layer**: Ed25519 signature over canonical JSON payload
 2. **TOFU**: First-seen public key is pinned; subsequent messages must match
@@ -39,7 +39,7 @@ DAP uses a 3-layer trust model:
 
 ### Sensitive Data
 
-- **Ed25519 private keys** (`~/.openclaw/dap/identity.json`) — never logged or transmitted
+- **Ed25519 private keys** (`~/.openclaw/awn/identity.json`) — never logged or transmitted
 
 ### Bootstrap Nodes
 

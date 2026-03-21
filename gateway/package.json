@@ -1,8 +1,8 @@
 {
-  "name": "dap-gateway",
+  "name": "awn-gateway",
   "version": "1.0.0",
   "type": "module",
-  "description": "DAP Gateway — portal + WebSocket bridge for browser access",
+  "description": "AWN Gateway — portal + WebSocket bridge for browser access",
   "main": "server.mjs",
   "scripts": {
     "start": "node server.mjs"

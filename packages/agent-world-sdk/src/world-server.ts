@@ -23,10 +23,10 @@ import type {
 } from "./types.js";
 
 const DEFAULT_BOOTSTRAP_URL =
-  "https://resciencelab.github.io/DAP/bootstrap.json";
+  "https://resciencelab.github.io/agent-world-network/bootstrap.json";
 
 /**
- * Start a fully-wired DAP World Agent server.
+ * Start a fully-wired AWN World Agent server.
  *
  * Handles: identity, peer DB, bootstrap discovery, peer protocol routes,
  * world.join / world.action / world.leave dispatch, idle-agent eviction,
@@ -357,9 +357,9 @@ export async function createWorldServer(
       onDiscovery: (n) =>
         console.log(`[world] Discovery complete — ${n} peer(s)`),
     });
-    console.log(`[world] Public mode — announcing to DAP network`);
+    console.log(`[world] Public mode — announcing to AWN network`);
   } else {
-    console.log(`[world] Private mode — skipping DAP network announce`);
+    console.log(`[world] Private mode — skipping AWN network announce`);
   }
 
   return {

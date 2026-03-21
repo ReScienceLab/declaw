@@ -16,7 +16,7 @@ jobs:
       - name: Fetch bootstrap node list
         id: bootstrap
         run: |
-          curl -fsSL https://resciencelab.github.io/DAP/bootstrap.json -o bootstrap.json
+          curl -fsSL https://resciencelab.github.io/agent-world-network/bootstrap.json -o bootstrap.json
           cat bootstrap.json | python3 -c "
           import json, sys
           d = json.load(sys.stdin)

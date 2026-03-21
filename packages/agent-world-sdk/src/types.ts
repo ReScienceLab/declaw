@@ -105,7 +105,7 @@ export interface WorldConfig {
   hostEndpoints?: Endpoint[]
   /** Listen port (default 8099) */
   port?: number
-  /** Externally reachable port for DAP announce, may differ in Docker (default = port) */
+  /** Externally reachable port for AWN announce, may differ in Docker (default = port) */
   publicPort?: number
   /** Public IP/hostname for announce endpoints */
   publicAddr?: string | null
@@ -115,7 +115,7 @@ export interface WorldConfig {
   bootstrapUrl?: string
   /** Max agents allowed; 0 = unlimited (default 0) */
   maxAgents?: number
-  /** Whether to announce to DAP network (default true) */
+  /** Whether to announce to AWN network (default true) */
   isPublic?: boolean
   /** Password required to join (default "" = none) */
   password?: string

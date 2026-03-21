@@ -1,5 +1,5 @@
 /**
- * Transport abstraction layer for DAP P2P communication.
+ * Transport abstraction layer for AWN P2P communication.
  *
  * Defines the interface that all transport backends must implement,
  * plus the TransportManager that handles automatic selection.

@@ -1,5 +1,5 @@
 /**
- * P2P client — sends signed messages to other DAP nodes.
+ * P2P client — sends signed messages to other AWN nodes.
  *
  * Delivery strategy by endpoint priority:
  *   1. QUIC/UDP transport (if available)

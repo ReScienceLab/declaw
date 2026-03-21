@@ -1,5 +1,5 @@
 /**
- * DAP — OpenClaw plugin entry point.
+ * AWN — Agent World Network — OpenClaw plugin entry point.
  *
  * Agent ID (sha256(publicKey)[:16]) is the primary peer identifier.
  * Transport is plain HTTP over TCP; QUIC is available as a fast optional transport.
@@ -18,7 +18,7 @@ import { TransportManager } from "./transport"
 import { UDPTransport } from "./transport-quic"
 import { parseDirectPeerAddress } from "./address"
 
-const DAP_TOOLS = [
+const AWN_TOOLS = [
   "p2p_list_peers",
   "p2p_send_message", "p2p_status",
   "list_worlds", "join_world",
@@ -27,14 +27,14 @@ const DAP_TOOLS = [
 function ensureToolsAllowed(config: any): void {
   try {
     const alsoAllow: string[] = config?.tools?.alsoAllow ?? []
-    const missing = DAP_TOOLS.filter(t => !alsoAllow.includes(t))
+    const missing = AWN_TOOLS.filter(t => !alsoAllow.includes(t))
     if (missing.length === 0) return
     const merged = [...alsoAllow, ...missing]
     const jsonVal = JSON.stringify(merged)
     execSync(`openclaw config set tools.alsoAllow '${jsonVal}'`, { timeout: 5000, stdio: "ignore" })
-    console.log(`[p2p] Auto-enabled ${missing.length} DAP tool(s) in tools.alsoAllow`)
+    console.log(`[awn] Auto-enabled ${missing.length} AWN tool(s) in tools.alsoAllow`)
   } catch {
-    console.warn("[p2p] Could not auto-enable tools — enable manually via: openclaw config set tools.alsoAllow")
+    console.warn("[awn] Could not auto-enable tools — enable manually via: openclaw config set tools.alsoAllow")
   }
 }
 
@@ -42,29 +42,29 @@ function ensurePluginAllowed(config: any): void {
   try {
     const allow: string[] | undefined = config?.plugins?.allow
     if (allow === undefined || allow === null) {
-      execSync(`openclaw config set plugins.allow '["dap"]'`, { timeout: 5000, stdio: "ignore" })
-      console.log("[p2p] Set plugins.allow to [dap]")
+      execSync(`openclaw config set plugins.allow '["awn"]'`, { timeout: 5000, stdio: "ignore" })
+      console.log("[awn] Set plugins.allow to [awn]")
       return
     }
-    if (Array.isArray(allow) && !allow.includes("dap")) {
-      const merged = [...allow, "dap"]
+    if (Array.isArray(allow) && !allow.includes("awn")) {
+      const merged = [...allow, "awn"]
       execSync(`openclaw config set plugins.allow '${JSON.stringify(merged)}'`, { timeout: 5000, stdio: "ignore" })
-      console.log("[p2p] Added dap to plugins.allow")
+      console.log("[awn] Added awn to plugins.allow")
     }
   } catch { /* best effort */ }
 }
 
 function ensureChannelConfig(config: any): void {
   try {
-    const channelCfg = config?.channels?.dap
+    const channelCfg = config?.channels?.awn
     if (channelCfg && channelCfg.dmPolicy) return
-    execSync(`openclaw config set channels.dap.dmPolicy '"pairing"'`, { timeout: 5000, stdio: "ignore" })
-    console.log("[p2p] Set channels.dap.dmPolicy to pairing")
+    execSync(`openclaw config set channels.awn.dmPolicy '"pairing"'`, { timeout: 5000, stdio: "ignore" })
+    console.log("[awn] Set channels.awn.dmPolicy to pairing")
   } catch { /* best effort */ }
 }
 
 let identity: Identity | null = null
-let dataDir: string = path.join(os.homedir(), ".openclaw", "dap")
+let dataDir: string = path.join(os.homedir(), ".openclaw", "awn")
 let peerPort: number = 8099
 let _agentMeta: { name?: string; version?: string; endpoints?: Endpoint[] } = {}
 let _transportManager: TransportManager | null = null
@@ -246,14 +246,14 @@ function buildSendOpts(peerIdOrAddr?: string): SendOptions {
 
 export default function register(api: any) {
   api.registerService({
-    id: "dap-node",
+    id: "awn-node",
 
     start: async () => {
       ensurePluginAllowed(api.config)
       ensureToolsAllowed(api.config)
       ensureChannelConfig(api.config)
 
-      const cfg: PluginConfig = api.config?.plugins?.entries?.["dap"]?.config ?? {}
+      const cfg: PluginConfig = api.config?.plugins?.entries?.["awn"]?.config ?? {}
       dataDir = cfg.data_dir ?? dataDir
       peerPort = cfg.peer_port ?? peerPort
       const pluginVersion: string = require("../package.json").version
@@ -264,9 +264,9 @@ export default function register(api: any) {
       initDb(dataDir)
       if (cfg.tofu_ttl_days !== undefined) setTofuTtl(cfg.tofu_ttl_days)
 
-      console.log(`[p2p] Agent ID:  ${identity.agentId}`)
+      console.log(`[awn] Agent ID:  ${identity.agentId}`)
       if (_agentMeta.name) {
-        console.log(`[p2p] Name:      ${_agentMeta.name}`)
+        console.log(`[awn] Name:      ${_agentMeta.name}`)
       }
 
       _transportManager = new TransportManager()
@@ -282,17 +282,17 @@ export default function register(api: any) {
       })
 
       if (activeTransport) {
-        console.log(`[p2p] Active transport: ${activeTransport.id} -> ${activeTransport.address}`)
+        console.log(`[awn] Active transport: ${activeTransport.id} -> ${activeTransport.address}`)
         _agentMeta.endpoints = _transportManager.getEndpoints()
 
         if (_quicTransport.isActive()) {
-          console.log(`[p2p] QUIC endpoint: ${_quicTransport.address}`)
+          console.log(`[awn] QUIC endpoint: ${_quicTransport.address}`)
           _quicTransport.onMessage((from, data) => {
             handleUdpMessage(data, from)
           })
         }
       } else {
-        console.warn("[p2p] No QUIC transport available — HTTP-only mode")
+        console.warn("[awn] No QUIC transport available — HTTP-only mode")
       }
 
       await startPeerServer(peerPort, { identity })
@@ -307,7 +307,7 @@ export default function register(api: any) {
 
       if (isFirstRun) {
         const welcomeLines = [
-          "Welcome to DAP P2P!",
+          "Welcome to Agent World Network!",
           "",
           `Your Agent ID: ${identity.agentId}`,
           _quicTransport?.isActive()
@@ -315,23 +315,23 @@ export default function register(api: any) {
             : "Running in HTTP-only mode.",
           "",
           "Quick start:",
-          "  openclaw p2p status     — show your agent ID",
+          "  openclaw awn status     — show your agent ID",
           "  openclaw join_world <id> — join a world to discover peers",
         ]
         _welcomeTimer = setTimeout(() => {
           _welcomeTimer = null
           try {
             api.gateway?.receiveChannelMessage?.({
-              channelId: "dap",
+              channelId: "awn",
               accountId: "system",
               text: welcomeLines.join("\n"),
-              senderId: "dap-system",
+              senderId: "awn-system",
             })
           } catch { /* best effort */ }
         }, 2000)
       }
 
-      console.log(`[p2p] Ready — join a world to discover peers`)
+      console.log(`[awn] Ready — join a world to discover peers`)
     },
 
     stop: async () => {
@@ -368,13 +368,13 @@ export default function register(api: any) {
   } else {
     api.registerChannel({
       plugin: {
-        id: "dap",
+        id: "awn",
         meta: {
-          id: "dap",
-          label: "DAP",
-          selectionLabel: "DAP (P2P)",
-          docsPath: "/channels/dap",
-          blurb: "Direct encrypted P2P messaging.",
+          id: "awn",
+          label: "AWN",
+          selectionLabel: "AWN (Agent World Network)",
+          docsPath: "/channels/awn",
+          blurb: "Agent World Network — world-scoped agent communication.",
           aliases: ["p2p"],
         },
         capabilities: { chatTypes: ["direct"] },
@@ -405,9 +405,9 @@ export default function register(api: any) {
   // ── CLI commands ───────────────────────────────────────────────────────────
   api.registerCli(
     ({ program }: { program: any }) => {
-      const p2p = program.command("p2p").description("P2P node management")
+      const awn = program.command("awn").description("Agent World Network node management")
 
-      p2p
+      awn
         .command("status")
         .description("Show this node's agent ID and status")
         .action(() => {
@@ -415,7 +415,7 @@ export default function register(api: any) {
             console.log("Plugin not started yet. Try again after gateway restart.")
             return
           }
-          console.log("=== P2P Node Status ===")
+          console.log("=== AWN Node Status ===")
           if (_agentMeta.name) console.log(`Agent name:     ${_agentMeta.name}`)
           console.log(`Agent ID:       ${identity.agentId}`)
           console.log(`DID Key:        ${deriveDidKey(identity.publicKey)}`)
@@ -429,13 +429,13 @@ export default function register(api: any) {
           console.log(`Worlds joined:  ${_joinedWorlds.size}`)
         })
 
-      p2p
+      awn
         .command("peers")
         .description("List known peers")
         .action(() => {
           const peers = listPeers()
           if (peers.length === 0) {
-            console.log("No peers yet. Use 'openclaw p2p add <agent-id>' to add one.")
+            console.log("No peers yet. Use 'openclaw awn add <agent-id>' to add one.")
             return
           }
           console.log("=== Known Peers ===")
@@ -448,7 +448,7 @@ export default function register(api: any) {
           }
         })
 
-      p2p
+      awn
         .command("ping <agentId>")
         .description("Check if a peer is reachable")
         .action(async (agentId: string) => {
@@ -458,7 +458,7 @@ export default function register(api: any) {
           console.log(ok ? `Reachable` : `Unreachable`)
         })
 
-      p2p
+      awn
         .command("send <agentId> <message>")
         .description("Send a direct message to a peer")
         .action(async (agentId: string, message: string) => {
@@ -474,7 +474,7 @@ export default function register(api: any) {
           }
         })
 
-      p2p
+      awn
         .command("worlds")
         .description("Show joined worlds")
         .action(() => {
@@ -488,20 +488,20 @@ export default function register(api: any) {
           }
         })
     },
-    { commands: ["p2p"] }
+    { commands: ["awn"] }
   )
 
   // ── Slash commands ─────────────────────────────────────────────────────────
   api.registerCommand({
-    name: "p2p-status",
-    description: "Show P2P node status",
+    name: "awn-status",
+    description: "Show AWN node status",
     handler: () => {
-      if (!identity) return { text: "P2P: not started yet." }
+      if (!identity) return { text: "AWN: not started yet." }
       const peers = listPeers()
       const activeTransport = _transportManager?.active
       return {
         text: [
-          `**P2P Node**`,
+          `**AWN Node**`,
           `Agent ID: \`${identity.agentId}\``,
           `DID Key: \`${deriveDidKey(identity.publicKey)}\``,
           `Transport: ${activeTransport?.id ?? "http-only"}`,
@@ -514,11 +514,11 @@ export default function register(api: any) {
   })
 
   api.registerCommand({
-    name: "p2p-peers",
-    description: "List known P2P peers",
+    name: "awn-peers",
+    description: "List known AWN peers",
     handler: () => {
       const peers = listPeers()
-      if (peers.length === 0) return { text: "No peers yet. Use `openclaw p2p add <agent-id>`." }
+      if (peers.length === 0) return { text: "No peers yet. Use `openclaw awn add <agent-id>`." }
       const lines = peers.map((p) => {
         const label = p.alias ? ` — ${p.alias}` : ""
         const ver = p.version ? ` [v${p.version}]` : ""
@@ -544,7 +544,7 @@ export default function register(api: any) {
     },
     async execute(_id: string, params: { agent_id: string; message: string; event?: string; port?: number }) {
       if (!identity) {
-        return { content: [{ type: "text", text: "Error: P2P service not started yet." }] }
+        return { content: [{ type: "text", text: "Error: AWN service not started yet." }] }
       }
       const event = params.event ?? "chat"
       const result = await sendP2PMessage(identity, params.agent_id, event, params.message, params.port ?? 8099, 10_000, buildSendOpts(params.agent_id))
@@ -557,7 +557,7 @@ export default function register(api: any) {
 
   api.registerTool({
     name: "p2p_list_peers",
-    description: "List all known P2P peers. Optionally filter by capability prefix (e.g. 'world:' or 'world:pixel-city').",
+    description: "List all known peers. Optionally filter by capability prefix (e.g. 'world:' or 'world:pixel-city').",
     parameters: {
       type: "object",
       properties: {
@@ -585,11 +585,11 @@ export default function register(api: any) {
 
   api.registerTool({
     name: "p2p_status",
-    description: "Get this node's agent ID and P2P service status.",
+    description: "Get this node's agent ID and AWN service status.",
     parameters: { type: "object", properties: {}, required: [] },
     async execute(_id: string, _params: Record<string, never>) {
       if (!identity) {
-        return { content: [{ type: "text", text: "P2P service not started." }] }
+        return { content: [{ type: "text", text: "AWN service not started." }] }
       }
       const peers = listPeers()
       const activeTransport = _transportManager?.active
@@ -615,7 +615,7 @@ export default function register(api: any) {
       // Fetch from registry
       let registryWorlds: Array<{ agentId: string; alias?: string; endpoints?: Endpoint[]; capabilities?: string[]; lastSeen: number }> = []
       try {
-        const registryUrl = "https://resciencelab.github.io/DAP/bootstrap.json"
+        const registryUrl = "https://resciencelab.github.io/agent-world-network/bootstrap.json"
         const resp = await fetch(registryUrl, { signal: AbortSignal.timeout(10_000) })
         if (resp.ok) {
           const data = await resp.json() as { bootstrap_nodes?: Array<{ addr: string; httpPort?: number }> }
@@ -684,7 +684,7 @@ export default function register(api: any) {
     },
     async execute(_id: string, params: { world_id?: string; address?: string; alias?: string }) {
       if (!identity) {
-        return { content: [{ type: "text", text: "P2P service not started." }] }
+        return { content: [{ type: "text", text: "AWN service not started." }] }
       }
       if (!params.world_id && !params.address) {
         return { content: [{ type: "text", text: "Provide either world_id or address." }], isError: true }

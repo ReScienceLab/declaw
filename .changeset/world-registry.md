@@ -1,5 +1,5 @@
 ---
-"@resciencelab/dap": minor
+"@resciencelab/agent-world-network": minor
 ---
 
 feat: convert bootstrap nodes to World Registry

@@ -1,11 +1,11 @@
 /**
- * DAP Gateway — stateless portal + WebSocket bridge.
+ * AWN Gateway — stateless portal + WebSocket bridge.
  * No OpenClaw dependency. Runs on plain HTTP/TCP.
  *
  * HTTP Endpoints:
  *   GET  /health          — health check
- *   GET  /worlds          — list discovered world:* peers on DAP network
- *   GET  /agents          — list all known DAP peers
+ *   GET  /worlds          — list discovered world:* peers on AWN network
+ *   GET  /agents          — list all known AWN peers
  *   GET  /world/:worldId  — info about a specific world
  *
  * WebSocket:
@@ -17,9 +17,9 @@
  *                        { type: "error", message: "..." }
  *
  * Env:
- *   PEER_PORT         — DAP peer HTTP port (default 8099)
+ *   PEER_PORT         — AWN peer HTTP port (default 8099)
  *   HTTP_PORT         — gateway public HTTP port (default 8100)
- *   PUBLIC_ADDR       — own public IP/hostname for DAP announce
+ *   PUBLIC_ADDR       — own public IP/hostname for AWN announce
  *   DATA_DIR          — identity persistence (default /data)
  *   BOOTSTRAP_URL     — bootstrap node list (default GitHub Pages)
  *   DISCOVERY_INTERVAL_MS — how often to re-discover worlds (default 60000)
@@ -44,7 +44,7 @@ const HTTP_PORT = parseInt(process.env.HTTP_PORT ?? "8100");
 const PUBLIC_ADDR = process.env.PUBLIC_ADDR ?? null;
 const PUBLIC_URL = process.env.PUBLIC_URL ?? null; // e.g. https://gateway.example.com
 const DATA_DIR = process.env.DATA_DIR ?? "/data";
-const BOOTSTRAP_URL = process.env.BOOTSTRAP_URL ?? "https://resciencelab.github.io/DAP/bootstrap.json";
+const BOOTSTRAP_URL = process.env.BOOTSTRAP_URL ?? "https://resciencelab.github.io/agent-world-network/bootstrap.json";
 const DISCOVERY_INTERVAL_MS = parseInt(process.env.DISCOVERY_INTERVAL_MS ?? "60000");
 const STALE_TTL_MS = parseInt(process.env.STALE_TTL_MS ?? String(30 * 60 * 1000)); // 30 min
 const MAX_PEERS = 500;
@@ -138,7 +138,7 @@ function unsubscribe(worldId, ws) {
 }
 
 // ---------------------------------------------------------------------------
-// Outbound DAP messaging (gateway → world agent)
+// Outbound AWN messaging (gateway → world agent)
 // ---------------------------------------------------------------------------
 
 async function sendToWorld(worldId, event, content) {
@@ -203,7 +203,7 @@ async function announceToNode(addr, httpPort) {
   const payload = {
     from: selfAgentId,
     publicKey: selfPubB64,
-    alias: "DAP Gateway",
+    alias: "AWN Gateway",
     version: "1.0.0",
     endpoints: selfEndpoints,
     capabilities: ["gateway"],
@@ -286,7 +286,7 @@ async function discoverWorlds() {
 }
 
 // ---------------------------------------------------------------------------
-// DAP peer server (receive world.state broadcasts from World Agents)
+// AWN peer server (receive world.state broadcasts from World Agents)
 // ---------------------------------------------------------------------------
 
 async function startPeerListener() {
@@ -359,7 +359,7 @@ async function startPeerListener() {
   });
 
   await peerServer.listen({ port: PEER_PORT, host: "::" });
-  console.log(`[gateway] DAP peer listener on [::]:${PEER_PORT}`);
+  console.log(`[gateway] AWN peer listener on [::]:${PEER_PORT}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -383,7 +383,7 @@ app.get("/.well-known/agent.json", async (_req, reply) => {
       ? `${PUBLIC_URL.replace(/\/$/, "")}/.well-known/agent.json`
       : `http://${PUBLIC_ADDR ?? "localhost"}:${HTTP_PORT}/.well-known/agent.json`;
     _cachedCardJson = await buildSignedAgentCard(
-      { name: "DAP Gateway", cardUrl, profiles: ["core/v0.2"], nodeClass: "CoreNode" },
+      { name: "AWN Gateway", cardUrl, profiles: ["core/v0.2"], nodeClass: "CoreNode" },
       identity
     );
   }

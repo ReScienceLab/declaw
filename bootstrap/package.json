@@ -1,8 +1,8 @@
 {
-  "name": "dap-bootstrap",
+  "name": "awn-bootstrap",
   "version": "0.5.0",
   "type": "module",
-  "description": "DAP standalone bootstrap peer exchange server",
+  "description": "AWN standalone bootstrap peer exchange server",
   "main": "server.mjs",
   "scripts": {
     "start": "node server.mjs"

@@ -1,7 +1,7 @@
 {
   "name": "@resciencelab/agent-world-sdk",
   "version": "0.5.0",
-  "description": "Reusable DAP World Agent infrastructure — crypto, identity, peer DB, bootstrap, peer protocol",
+  "description": "Reusable Agent World Network infrastructure — crypto, identity, peer DB, bootstrap, peer protocol",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -21,7 +21,7 @@
     "prepublishOnly": "npm run build"
   },
   "keywords": [
-    "dap",
+    "awn",
     "agent-world",
     "p2p",
     "ed25519",

@@ -260,7 +260,7 @@ function PeerCounter({ frame }: { frame: number }) {
 }
 
 // ── Main composition ──────────────────────────────────────────────────────────
-export function DAPDemo() {
+export function AWNDemo() {
   const frame = useCurrentFrame()
   const { fps } = useVideoConfig()
 
@@ -374,7 +374,7 @@ export function DAPDemo() {
         <g opacity={titleOp}>
           <text x={CX} y={478} textAnchor="middle"
             fill={C.text} fontSize={96} fontWeight={700} letterSpacing={-3}
-            fontFamily="ui-monospace,monospace">DAP</text>
+            fontFamily="ui-monospace,monospace">AWN</text>
           <text x={CX} y={546} textAnchor="middle"
             fill={C.muted} fontSize={32}
             fontFamily="ui-monospace,monospace">
@@ -388,7 +388,7 @@ export function DAPDemo() {
           <text x={CX} y={638} textAnchor="middle"
             fill={C.muted} fontSize={18}
             fontFamily="ui-monospace,monospace">
-            github.com/ReScienceLab/DAP
+            github.com/ReScienceLab/agent-world-network
           </text>
         </g>
 
@@ -487,10 +487,10 @@ export function DAPDemo() {
 
         {/* ── Conversation bubbles ── */}
         <Bubble x={ALICE.x + 58} y={ALICE.y - 85}
-          text={`"Isn't it fascinating how DAP lets us communicate securely over Yggdrasil's IPv6 mesh?"`}
+          text={`"Isn't it fascinating how AWN lets us communicate securely over Yggdrasil's IPv6 mesh?"`}
           color={C.bob} opacity={r1BubA} subtext="— bob (gpt-4o)" />
         <Bubble x={BOB.x - 58} y={BOB.y - 85}
-          text={`"DAP's decentralized architecture with Yggdrasil creates seamless, private P2P communication."`}
+          text={`"AWN's decentralized architecture with Yggdrasil creates seamless, private P2P communication."`}
           color={C.alice} opacity={r1BubB} align="right" subtext="— alice (gpt-4o)" />
 
         <Bubble x={ALICE.x + 58} y={ALICE.y + 35}
@@ -533,7 +533,7 @@ export function DAPDemo() {
             <text textAnchor="middle" y={6}
               fill={C.text} fontSize={34} fontWeight={700}
               fontFamily="ui-monospace,monospace">
-              github.com/ReScienceLab/DAP
+              github.com/ReScienceLab/agent-world-network
             </text>
             <text textAnchor="middle" y={38}
               fill={C.muted} fontSize={17}

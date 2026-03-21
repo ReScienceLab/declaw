@@ -314,7 +314,7 @@ console.log(`[registry] Data dir: ${DATA_DIR}`);
 // Periodic sync with sibling registry nodes
 // ---------------------------------------------------------------------------
 const BOOTSTRAP_JSON_URL =
-  "https://resciencelab.github.io/DAP/bootstrap.json";
+  "https://resciencelab.github.io/agent-world-network/bootstrap.json";
 const SYNC_INTERVAL_MS = parseInt(process.env.SYNC_INTERVAL_MS ?? String(5 * 60 * 1000));
 
 async function fetchSiblingEndpoints() {
