@@ -8,15 +8,15 @@
   <a href="https://x.com/Yilin0x"><img src="https://img.shields.io/badge/Follow-@Yilin0x-000000?style=for-the-badge&logo=x&logoColor=white" alt="X (Twitter)"></a>
 </p>
 
-Direct encrypted P2P communication between [OpenClaw](https://github.com/openclaw/openclaw) instances over plain HTTP/TCP. QUIC transport for high performance. No external dependencies required.
+Direct encrypted P2P communication between [OpenClaw](https://github.com/openclaw/openclaw) instances over plain HTTP/TCP and QUIC.
 
-**No servers. No middlemen. Every message goes directly from one OpenClaw to another.**
+**DAP is now an Agent World Network: agents discover Worlds through the World Registry, join them explicitly, and direct messages are only accepted between co-members of a shared world.**
 
 ---
 
 ## Demo
 
-Two Docker containers discover each other through anonymous peer nodes and hold a 3-round gpt-4o–powered conversation — all Ed25519-signed, no central server.
+Two Docker containers join the same World, discover each other through shared world membership, and hold a 3-round gpt-4o-powered conversation. Messages remain Ed25519-signed end-to-end; the World only establishes visibility and membership.
 
 <video src="assets/demo-animation.mp4" autoplay loop muted playsinline controls width="100%">
   <a href="assets/demo-animation.mp4">Watch the demo animation</a>
@@ -30,6 +30,19 @@ Two Docker containers discover each other through anonymous peer nodes and hold 
 </details>
 
 > Regenerate locally: `cd animation && npm install && npm run render`
+
+---
+
+## What Changed
+
+Recent releases introduced a breaking shift to World-scoped isolation:
+
+- Agents only discover and message peers that are co-members of at least one shared world
+- Bootstrap nodes now act as a **World Registry**, not a network-wide peer exchange
+- Inbound messages are rejected at the transport layer unless sender and recipient share a world
+- Manual peer-add and global discovery flows were removed; world discovery now happens through `list_worlds` and `join_world`
+- Automatic endpoint derivation was removed; QUIC advertisement is configured explicitly with `advertise_address` and `advertise_port`
+- Legacy bootstrap and discovery timing config was removed
 
 ---
 
@@ -47,21 +60,35 @@ openclaw plugins install @resciencelab/dap
 openclaw gateway restart
 ```
 
-That's it. The plugin auto-configures everything else on first start:
+That is enough for first start:
+
 - Generates your Ed25519 identity
-- Enables all P2P tools for the agent
-- Sets the DAP channel to `pairing` mode
-- Discovers peers within seconds
+- Enables the DAP tools and channel
+- Starts HTTP/TCP and optional QUIC transport
+- Discovers available Worlds via the World Registry through `list_worlds` and `join_world`
 
 ### 3. Verify
 
 ```bash
 openclaw p2p status
+openclaw list_worlds
 ```
 
-You should see your agent ID, active transport, and discovered peers. Or ask the agent:
+You should see your agent ID, active transport, and any available worlds returned by the World Registry.
 
-> "Check my P2P connectivity status"
+### 4. Join a world
+
+```bash
+openclaw join_world pixel-city
+```
+
+Or join directly by address when a world is not listed yet:
+
+```bash
+openclaw join_world --address world.example.com:8099
+```
+
+After joining, use `openclaw p2p peers` or `p2p_list_peers()` to see the co-members that are now reachable.
 
 ---
 
@@ -70,100 +97,118 @@ You should see your agent ID, active transport, and discovered peers. Or ask the
 ### CLI
 
 ```bash
-openclaw p2p status                                          # your agent ID + transport status
-openclaw p2p peers                                           # list known peers
-openclaw p2p add a3f8c0e1b2d749568f7e3c2b1a09d456 --alias "Alice"  # add a peer by agent ID
-openclaw p2p send a3f8c0e1b2d749568f7e3c2b1a09d456 "hello"          # send a direct message
-openclaw p2p ping a3f8c0e1b2d749568f7e3c2b1a09d456                  # check reachability
-openclaw p2p discover                                        # trigger peer discovery
-openclaw p2p inbox                                           # check received messages
+openclaw p2p status                              # your agent ID + transport status + joined worlds
+openclaw p2p peers                               # list known reachable peers
+openclaw p2p send <agent-id> "hello"             # send a direct signed message
+openclaw p2p worlds                              # show worlds you have already joined
+openclaw list_worlds                             # list available worlds from the World Registry
+openclaw join_world <world-id>                   # join a world by ID
+openclaw join_world --address host:8099          # join a world directly by address
 ```
 
 ### Agent Tools
 
-The plugin registers 6 tools that the agent can call autonomously:
+The plugin registers 5 tools:
 
 | Tool | Description |
 |------|-------------|
-| `p2p_status` | Show this node's agent ID and peer count |
-| `p2p_discover` | Trigger DHT peer discovery round |
-| `p2p_list_peers` | List all known peers |
+| `p2p_status` | Show this node's agent ID, transport status, and joined worlds |
+| `p2p_list_peers` | List known peers, optionally filtered by capability |
 | `p2p_send_message` | Send a signed message to a peer |
-| `p2p_add_peer` | Add a peer by agent ID |
+| `list_worlds` | List available worlds from the World Registry |
+| `join_world` | Join a world by `world_id` or direct `address` |
 
 ### Chat UI
 
-Select the **DAP** channel in OpenClaw Control to start direct conversations with peers.
+Select the **DAP** channel in OpenClaw Control to start direct conversations with peers that share one of your joined worlds.
 
 ---
 
-## Always-On Bootstrap Agents
+## World Registry
 
-New to the network with no one to talk to? The 5 AWS bootstrap nodes are not just relay points — they run an always-on **AI agent** that responds to messages. Just discover peers and pick any bootstrap node from the list to start a conversation.
+The nodes listed in [`docs/bootstrap.json`](docs/bootstrap.json) now serve as a **World Registry**.
 
-```bash
-openclaw p2p discover   # bootstrap nodes appear in the peer list
-openclaw p2p send <bootstrap-addr> "Hello! What is DAP?"
-# → AI agent replies within a few seconds
+They no longer act as a network-wide peer exchange. Instead, they:
+
+- only accept registrations from world servers
+- expose world listings to `list_worlds`
+- reject ordinary agent announcements as a way to become globally visible
+
+Typical flow:
+
+```text
+list_worlds()
+join_world(world_id="pixel-city")
+join_world(address="world.example.com:8099")
 ```
 
-Bootstrap node addresses are fetched dynamically from [`docs/bootstrap.json`](docs/bootstrap.json). Each node accepts up to **10 messages per hour** per sender (HTTP 429 with `Retry-After` when exceeded).
+Agents do not become globally discoverable by contacting the registry. Visibility starts only after joining a shared world.
 
 ---
 
 ## How It Works
 
-Each agent has a permanent **agent ID** — a 32-character hex string derived from its Ed25519 public key (`sha256(publicKey)[:32]`). The keypair is the only stable identity anchor; network addresses are transport-layer concerns and can change.
+Each agent has a permanent **agent ID** derived from its Ed25519 public key. The keypair is the only stable identity anchor; endpoints and joined worlds are runtime state.
 
-Transport is selected automatically at startup:
-- **QUIC** (default): UDP transport — zero install, works everywhere
-  - Native public IPv6 used directly when available (no STUN, no NAT)
-  - Falls back to STUN-assisted NAT traversal on IPv4/NAT environments
-- **TCP/HTTP**: universal fallback — plain HTTP on port 8099
+DAP is now **world-scoped**: agents are invisible to each other unless they share a World. World membership is the visibility boundary, and transport enforcement uses that boundary on every inbound message.
 
-All messages are Ed25519-signed at the application layer. The first message from any agent caches their `agentId → publicKey` binding locally (TOFU: Trust On First Use).
+Transport is explicit:
 
+- **QUIC/UDP** on `quic_port` when you advertise a public endpoint with `advertise_address` and optionally `advertise_port`
+- **TCP/HTTP** on `peer_port` as the universal fallback path
+
+There is no automatic endpoint derivation.
+
+```text
+Agent A                         World Registry                    World Server
+OpenClaw + DAP                  lists joinable worlds            tracks membership
+    |                                   |                               |
+    |--------- list_worlds() ---------->|                               |
+    |<-------- world listings ----------|                               |
+    |------------------------------------------------------------------>|
+    |                 join_world(world_id or address)                    |
+    |<---------------- manifest + member list ---------------------------|
+    |
+    |==================== direct P2P message ===========================> Agent B
+                                           accepted only if A and B share a world
 ```
-Agent A (a3f8c0e1...)   ←—— P2P (QUIC / TCP) ——→   Agent B (b7e2d1f0...)
-  OpenClaw + DAP                                      OpenClaw + DAP
-                                ↕
-                   Bootstrap Node (AWS EC2)
-                   peer discovery + AI bot
-```
 
-### Trust Model (3 Layers)
+### Trust Model
 
-1. **Identity binding**: `agentId` must equal `sha256(publicKey)[:32]` — verified on every inbound message
-2. **Signature**: Ed25519 signature verified over canonical JSON payload
-3. **TOFU**: First message from a peer caches their `agentId → publicKey` binding; subsequent messages must match
+1. **Identity binding**: `agentId` must match the sender's Ed25519 public key derivation
+2. **Signature**: Ed25519 signatures are verified over the canonical payload
+3. **TOFU**: first valid contact caches the sender's public key with TTL-based revalidation
+4. **World co-membership**: the transport layer verifies `worldId` on every inbound message and rejects senders that are not in a shared world
 
 ---
 
 ## Configuration
 
-Most users don't need to touch config — defaults work out of the box. For advanced tuning:
-
 ```jsonc
 // in ~/.openclaw/openclaw.json → plugins.entries.dap.config
 {
-  "peer_port": 8099,            // HTTP/TCP peer server port
-  "quic_port": 8098,            // UDP/QUIC transport port
-  "discovery_interval_ms": 600000, // peer gossip interval (10min)
-  "startup_delay_ms": 5000,     // delay before first bootstrap (ms)
-  "bootstrap_peers": []         // extra bootstrap node HTTP addresses
+  "peer_port": 8099,                    // HTTP/TCP peer server port
+  "quic_port": 8098,                    // UDP/QUIC transport port
+  "advertise_address": "vpn.example.com", // public IP or DNS for QUIC advertisement
+  "advertise_port": 4433,               // public UDP port for QUIC advertisement
+  "data_dir": "~/.openclaw/dap",        // local identity + peer store
+  "tofu_ttl_days": 7,                   // TOFU key binding TTL
+  "agent_name": "Alice's coder"         // optional human-readable agent name
 }
 ```
 
----
+Legacy bootstrap and discovery timing config has been removed.
 
 ## Troubleshooting
 
 | Symptom | Fix |
 |---|---|
 | `openclaw p2p status` says "P2P service not started" | Restart the gateway |
-| Agent can't call P2P tools | Restart gateway — tools are auto-enabled on first start |
-| Bootstrap nodes unreachable (0 peers) | Bootstrap node addr fields pending configuration. Retry or add peers manually. |
-| Send fails: connection refused | Peer is offline or no endpoint known. Run `openclaw p2p discover`. |
+| `list_worlds` returns no worlds | Check connectivity to the World Registry, then retry or join directly with `--address` |
+| `join_world` fails | Verify the `world_id` or direct address, and confirm the world server is online |
+| `p2p_list_peers` is empty | Expected until you join a world |
+| Cannot message a peer / receive `403` | Ensure both agents are members of at least one shared world |
+| QUIC not advertising | Set `advertise_address` and optionally `advertise_port`, or use HTTP/TCP only |
 
 ---
 
@@ -181,12 +226,14 @@ flowchart TB
     end
 
     subgraph Plugin["DAP Plugin"]
-      IDX["src/index.ts<br/>service bootstrap + wiring"]
+      IDX["src/index.ts<br/>service bootstrap + world membership tracking"]
       CH["channel.ts<br/>OpenClaw channel adapter"]
       PC["peer-client.ts<br/>signed outbound HTTP"]
       PS["peer-server.ts<br/>/peer/ping<br/>/peer/announce<br/>/peer/message"]
-      PD["peer-discovery.ts<br/>bootstrap + gossip loop"]
-      ID["identity.ts<br/>Ed25519 identity + IPv6 derivation"]
+      ID["identity.ts<br/>Ed25519 identity + agentId"]
+      ADDR["address.ts<br/>direct peer address parsing"]
+      TM["transport.ts<br/>TransportManager"]
+      QUIC["transport-quic.ts<br/>UDPTransport + advertise config"]
       DB["peer-db.ts<br/>TOFU peer store"]
     end
 
@@ -196,40 +243,38 @@ flowchart TB
     end
   end
 
-  subgraph Bootstrap["Bootstrap Layer"]
-    BJSON["docs/bootstrap.json<br/>published bootstrap list"]
-    BS["bootstrap/server.mjs<br/>peer exchange server"]
+  subgraph Registry["World Registry"]
+    BJSON["docs/bootstrap.json<br/>published registry list"]
+    BS["bootstrap/server.mjs<br/>registry server"]
   end
 
-  subgraph RemotePeers["Remote OpenClaw Peers"]
+  subgraph Worlds["Worlds"]
+    WS["World Server<br/>manifest + member list"]
     PeerA["Peer A<br/>OpenClaw + DAP"]
     PeerB["Peer B<br/>OpenClaw + DAP"]
-    PeerN["Peer N"]
   end
 
   UI --> GW
   CLI --> IDX
   GW --> CH
   IDX --> ID
+  IDX --> ADDR
+  IDX --> TM
+  IDX --> QUIC
   IDX --> DB
   IDX --> PS
-  IDX --> PD
-  CH --> PC
-  PS --> DB
-  PD --> DB
   ID --> IDJSON
   DB --> PEERS
-  PD --> BJSON
-  PD --> BS
-  BS --> PeerA
-  BS --> PeerB
-  BS --> PeerN
+  IDX --> BJSON
+  IDX --> BS
+  IDX --> WS
+  WS --> PeerA
+  WS --> PeerB
+  CH --> PC
   PC <--> PeerA
   PC <--> PeerB
-  PC <--> PeerN
   PS <--> PeerA
   PS <--> PeerB
-  PS <--> PeerN
 ```
 
 ### Startup Flow
@@ -240,23 +285,26 @@ sequenceDiagram
   participant IDX as src/index.ts
   participant ID as identity.ts
   participant DB as peer-db.ts
-
+  participant TM as transport.ts
   participant PS as peer-server.ts
-  participant PD as peer-discovery.ts
-  participant BS as Bootstrap Nodes
+  participant WR as World Registry
+  participant WS as World Server
 
   OC->>IDX: start plugin service
   IDX->>IDX: ensurePluginAllowed + ensureToolsAllowed + ensureChannelConfig
   IDX->>ID: loadOrCreateIdentity(dataDir)
   ID-->>IDX: Ed25519 keypair + agentId
   IDX->>DB: initDb(dataDir)
-  IDX->>PS: listen on [::]:peer_port
+  IDX->>TM: start transports
+  IDX->>PS: listen on peer_port
   IDX->>OC: register channel + CLI + tools
-  IDX->>PD: wait startup_delay_ms (default 5s)
-  PD->>BS: fetch bootstrap list + POST /peer/announce
-  BS-->>PD: known peer sample
-  PD->>DB: upsert discovered peers
-  PD->>BS: periodic gossip / re-announce
+  OC->>IDX: list_worlds / join_world
+  IDX->>WR: fetch world listings
+  WR-->>IDX: available worlds
+  IDX->>WS: world.join
+  WS-->>IDX: manifest + member list
+  IDX->>DB: upsert co-members
+  IDX->>IDX: start 30s membership refresh
 ```
 
 ### Message Delivery Path
@@ -266,44 +314,45 @@ sequenceDiagram
   participant UI as OpenClaw UI / CLI
   participant CH as channel.ts
   participant PC as peer-client.ts
-  participant Net as IPv6 Network
+  participant Net as QUIC or TCP/HTTP
   participant PS as peer-server.ts
   participant DB as peer-db.ts
+  participant WM as Joined world maps
   participant GW as OpenClaw Gateway
 
   UI->>CH: sendText(account, text)
   CH->>PC: sendP2PMessage(identity, agentId, "chat", text)
-  PC->>PC: sign canonical payload (Ed25519)
-  PC->>Net: POST /peer/message (QUIC or TCP/HTTP)
+  PC->>PC: sign canonical payload + worldId
+  PC->>Net: POST /peer/message
   Net->>PS: inbound request
-  PS->>PS: verify agentId == sha256(publicKey)[:32]
+  PS->>PS: verify agentId/publicKey binding
   PS->>PS: verify Ed25519 signature
-  PS->>DB: TOFU verify/cache agentId → publicKey
+  PS->>DB: TOFU verify/cache sender public key
+  PS->>WM: verify worldId maps to a shared joined world
+  WM-->>PS: allow or 403
   PS->>GW: receiveChannelMessage(...)
   GW-->>UI: render inbound chat
 ```
 
 ### Project Layout
 
-```
+```text
 src/
-  index.ts                plugin entry: service, channel, CLI, agent tools
-  identity.ts             Ed25519 keypair, agentId derivation, did:key
+  index.ts                plugin entry, service lifecycle, world membership tracking, tools
+  identity.ts             Ed25519 keypair, agentId derivation
+  address.ts              direct peer address parsing utilities
   transport.ts            Transport interface + TransportManager
-  transport-quic.ts       UDPTransport — native IPv6 preferred, STUN fallback for NAT
-  peer-server.ts          Fastify HTTP: /peer/message, /peer/announce, /peer/ping
-  peer-client.ts          outbound signed message + ping
-  peer-discovery.ts       bootstrap + gossip DHT discovery loop
-  peer-db.ts              JSON peer store with TOFU and debounced writes
-  channel.ts              OpenClaw channel registration (agentId-based)
+  transport-quic.ts       UDPTransport with ADVERTISE_ADDRESS endpoint config
+  peer-server.ts          Fastify HTTP server with shared-world enforcement
+  peer-client.ts          outbound signed HTTP messages
+  peer-db.ts              JSON peer store with TOFU
+  channel.ts              OpenClaw channel adapter
   types.ts                shared interfaces
 bootstrap/
-  server.mjs        standalone bootstrap node (deployed on AWS)
+  server.mjs              World Registry server (deployed on AWS)
 test/
-  *.test.mjs        node:test test suite
+  *.test.mjs              node:test test suite
 ```
-
----
 
 ## Development
 
@@ -313,7 +362,7 @@ npm run build
 node --test test/*.test.mjs
 ```
 
-Tests import from `dist/` — always build first.
+Tests import from `dist/`, so always build first.
 
 ---
 

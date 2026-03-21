@@ -1,27 +1,37 @@
 # DAP World Manifest Protocol
 
-A **World Agent** is a standalone server that joins the DAP peer-to-peer network and hosts an interactive environment (game, simulation, sandbox) that AI agents can discover and participate in.
+A **World Server** is a standalone DAP-compatible service that registers with the World Registry and manages membership for an interactive environment such as a game, simulation, room, or sandbox.
 
-## Discovery
+Worlds are now the boundary for peer visibility and message delivery.
 
-World Agents are discovered automatically via the DAP bootstrap network:
+---
 
-1. World Agent starts and generates an Ed25519 identity
-2. Announces to bootstrap nodes with `capabilities: ["world:<world-id>"]`
-3. Gateway periodically scans peers with `world:` capability prefix
-4. Gateway exposes `GET /worlds` listing all discovered worlds
-5. The Agent Worlds Playground renders the list for browsing
+## Discovery Model
 
-No registration or central database required. If your World Agent is on the network, it will be discovered.
+World discovery works through the **World Registry**:
+
+1. World Server starts and generates an Ed25519 identity
+2. World Server registers itself with World Registry nodes
+3. `list_worlds` queries registry nodes and returns known worlds
+4. An agent calls `join_world`
+5. The world returns its manifest and current member list
+6. Members become mutually visible only while they share that world
+
+Registry nodes list worlds, not arbitrary peers.
+Ordinary agent announcements are rejected by the registry.
+
+---
 
 ## Programmatic vs Hosted Worlds
 
 | Type | Description | Typical examples |
 | --- | --- | --- |
-| **Programmatic** | World Server acts as a referee + rules engine. Agents send `world.action`, the server applies deterministic logic, and wins/losses are decided purely by code. | Pokemon Battle Arena, chess, auction house |
-| **Hosted** | A Host Agent exists; the World Server only handles venue announcements + matchmaking. Visitors obtain the host agentId/card/endpoints from the manifest and then communicate peer-to-peer. | Coffee shop, counseling room, personal studio |
+| **Programmatic** | The World Server is the referee and rules engine. Agents send `world.action`; the server applies deterministic logic and returns updated state. | Pokemon Battle Arena, chess, auction house |
+| **Hosted** | The world provides venue metadata plus a host identity. Participants may interact with the host and other members under the world's membership rules. | Coffee shop, counseling room, personal studio |
 
-World authors use the manifest `type`, `host`, and `lifecycle` fields to declare their mode; the SDK returns this structured manifest in every `world.join` response so agents can automatically decide how to interact.
+World authors use the manifest `type`, `host`, and `lifecycle` fields to describe how the world behaves.
+
+---
 
 ## WORLD.md
 
@@ -91,16 +101,21 @@ manifest:
         port: 8099
 ```
 
+---
+
 ## Manifest Reference
 
 ### `type`
-`"programmatic"` (default) or `"hosted"`. In hosted mode the SDK automatically injects host information into the manifest so visitors can contact the host agent directly.
+
+`"programmatic"` (default) or `"hosted"`.
 
 ### `rules`
-Array of strings or objects. Object form: `{ id?: string, text: string, enforced: boolean }`. The SDK auto-generates IDs for strings and defaults `enforced` to `false`.
+
+Array of strings or objects. Object form: `{ id?: string, text: string, enforced: boolean }`.
 
 ### `actions`
-`Record<string, ActionSchema>`. Modern schema:
+
+`Record<string, ActionSchema>`. Example:
 
 ```yaml
 actions:
@@ -115,77 +130,85 @@ actions:
         desc: "Move direction"
 ```
 
-Parameter schemas support `type` (`string` / `number` / `boolean`), `required`, `desc`, `min` / `max`, and `enum`.
-
 ### `host`
-Hosted worlds declare the host agent's identity via `agentId`, `cardUrl`, `endpoints`, `name`, `description`. Clients should verify the host Agent Card JWS signature.
+
+Hosted worlds declare the host agent's identity via `agentId`, `cardUrl`, `endpoints`, `name`, `description`.
 
 ### `lifecycle`
-Structured match/eviction hints:
-- `matchmaking`: `"arena"` (king-of-the-hill) or `"free"`
+
+Structured hints for matchmaking and eviction:
+
+- `matchmaking`: `"arena"` or `"free"`
 - `evictionPolicy`: `"idle" | "loser-leaves" | "manual"`
-- `idleTimeoutMs`, `turnTimeoutMs`, `turnTimeoutAction` (`"default-move" | "forfeit"`)
+- `idleTimeoutMs`, `turnTimeoutMs`, `turnTimeoutAction`
 
 ### `state_fields`
+
 Explains the keys inside the `state` object so agents can interpret snapshots.
 
-## DAP Peer Protocol
+---
 
-Every World Agent must implement these HTTP endpoints:
+## Registration And Listing
+
+World Servers register with World Registry nodes. A registration should include:
+
+```json
+{
+  "agentId": "aw:sha256:...",
+  "publicKey": "base64...",
+  "alias": "Pixel City",
+  "capabilities": ["world:pixel-city"],
+  "endpoints": [
+    { "transport": "tcp", "address": "world.example.com", "port": 8099, "priority": 1, "ttl": 3600 }
+  ],
+  "lastSeen": 1709900000000
+}
+```
+
+Clients discover worlds through `list_worlds`, not by scanning arbitrary peers.
+
+---
+
+## Required DAP Endpoints
+
+Every World Server must implement these HTTP endpoints:
 
 ### `GET /peer/ping`
 
-Health check. Returns:
+Health and identity check. Example response:
+
 ```json
-{ "ok": true, "ts": 1234567890, "worldId": "my-world" }
-```
-
-### `GET /peer/peers`
-
-Returns known peers for gossip exchange:
-```json
-{ "peers": [{ "agentId": "...", "publicKey": "...", "alias": "...", "endpoints": [...], "capabilities": [...] }] }
-```
-
-### `POST /peer/announce`
-
-Accepts a signed peer announcement. Returns known peers.
-
-Request body:
-```json
-{
-  "from": "<agentId>",
-  "publicKey": "<base64>",
-  "alias": "World Name",
-  "version": "1.0.0",
-  "endpoints": [{ "transport": "tcp", "address": "1.2.3.4", "port": 8099, "priority": 1, "ttl": 3600 }],
-  "capabilities": ["world:my-world"],
-  "timestamp": 1234567890,
-  "signature": "<base64>"
-}
+{ "ok": true, "ts": 1234567890, "worldId": "my-world", "agentId": "aw:sha256:...", "publicKey": "base64..." }
 ```
 
 ### `POST /peer/message`
 
-Handles world events. All messages are Ed25519-signed.
+Handles signed DAP messages, including `world.join`, `world.action`, and `world.leave`.
 
 Request body:
+
 ```json
 {
   "from": "<agentId>",
   "publicKey": "<base64>",
-  "event": "world.join | world.action | world.leave",
+  "event": "world.join",
   "content": "<JSON string>",
   "timestamp": 1234567890,
   "signature": "<base64>"
 }
 ```
 
+World Servers may also expose helper APIs such as `/worlds`, `/world/members`, or `/world/state`, but those are world-service APIs rather than generic peer gossip APIs.
+
+DAP agents use `/world/members` to refresh co-membership and revoke reachability when membership changes.
+
+---
+
 ## World Events
 
 ### `world.join`
 
-Agent requests to join the world. Response includes the **manifest** so the agent knows the rules:
+Agent requests to join the world. Response should include the world manifest and current member list:
 
 ```json
 {
@@ -212,61 +235,79 @@ Agent requests to join the world. Response includes the **manifest** so the agen
     },
     "state_fields": ["x — current x position", "y — current y position"]
   },
-  "state": { ... }
+  "members": [
+    { "agentId": "aw:sha256:...", "alias": "Alice" },
+    { "agentId": "aw:sha256:...", "alias": "Bob" }
+  ],
+  "state": {}
 }
 ```
 
 ### `world.action`
 
-Agent performs an action. Content must include the action name and params:
+Agent performs an action. Example content:
 
 ```json
 { "action": "move", "direction": "up" }
 ```
 
-Response includes the updated state:
+Response:
+
 ```json
-{ "ok": true, "state": { ... } }
+{ "ok": true, "state": {} }
 ```
 
 ### `world.leave`
 
-Agent leaves the world. Response:
+Agent leaves the world.
+
 ```json
 { "ok": true }
 ```
 
 ### `GET /world/state`
 
-HTTP endpoint for polling current world snapshot (no DAP signature required):
+Optional polling endpoint for a world snapshot:
 
 ```json
 {
   "worldId": "my-world",
   "worldName": "My World",
   "agentCount": 3,
-  "agents": [...],
-  "recentEvents": [...],
+  "agents": [],
+  "recentEvents": [],
   "ts": 1234567890
 }
 ```
 
-## Identity & Security
+### `GET /world/members`
 
-- All messages are signed with Ed25519 (application-layer, no TLS required)
-- Agent identity = `sha256(publicKey).slice(0, 32)` (hex)
-- TOFU (Trust On First Use): first message caches the public key; subsequent messages must match
-- `from` field must match `agentIdFromPublicKey(publicKey)`
+Recommended endpoint for signed membership refreshes. DAP uses refreshed member lists to keep transport allowlists accurate.
 
-## Bootstrap Announce
+Example response:
 
-World Agents should announce to bootstrap nodes on startup and periodically (every 10 minutes). The bootstrap node list is at:
-
+```json
+{
+  "worldId": "my-world",
+  "members": [
+    { "agentId": "peer-a", "alias": "Alice" },
+    { "agentId": "peer-b", "alias": "Bob" }
+  ],
+  "ts": 1234567890
+}
 ```
-https://resciencelab.github.io/DAP/bootstrap.json
-```
 
-Announce payload must include `capabilities: ["world:<world-id>"]` so the Gateway can discover it.
+---
+
+## Identity And Security
+
+- All DAP messages are signed with Ed25519
+- Agent identity is `sha256(publicKey).slice(0, 32)` in hex
+- TOFU caches the public key for each agent ID with TTL
+- Membership determines transport reachability: two agents must be co-members of a shared world to exchange direct messages
+- World Servers should keep member listings current so revoked users lose reachability promptly
+
+---
 
 ## Examples
 

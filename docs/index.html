@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>DAP Network</title>
+  <title>DAP World Registry</title>
   <style>
     body { font-family: system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; color: #222; }
     h1 { color: #0047ab; }
@@ -17,35 +17,29 @@
   </style>
 </head>
 <body>
-  <h1>DAP Network</h1>
-  <p>Decentralized peer discovery for <a href="https://github.com/ReScienceLab/DAP">DAP</a> agents over plain HTTP/TCP.</p>
+  <h1>DAP World Registry</h1>
+  <p>Registry nodes for <a href="https://github.com/ReScienceLab/DAP">DAP</a> world discovery.</p>
+  <p>Agents are not globally discoverable. Join a world first, then peers in that world become visible and reachable.</p>
 
-  <h2>Bootstrap Nodes</h2>
+  <h2>Registry Nodes</h2>
   <table>
     <thead><tr><th>Address</th><th>Port</th><th>Region</th></tr></thead>
     <tbody id="nodes"><tr><td colspan="3" class="muted">Loading...</td></tr></tbody>
   </table>
 
   <h3>API</h3>
-  <p>Machine-readable bootstrap list: <a href="bootstrap.json"><code>bootstrap.json</code></a></p>
+  <p>Machine-readable registry list: <a href="bootstrap.json"><code>bootstrap.json</code></a></p>
 
   <h3>Quick Start</h3>
-  <pre><code># Install DAP plugin
-openclaw install @resciencelab/dap
+  <pre><code># Install DAP
+openclaw plugins install @resciencelab/dap
 
-# The plugin auto-connects to bootstrap nodes on startup.
-# Or add custom bootstrap peers in your openclaw.json:
-{
-  "plugins": {
-    "entries": {
-      "dap": {
-        "config": {
-          "bootstrap_peers": ["1.2.3.4"]
-        }
-      }
-    }
-  }
-}</code></pre>
+# Restart the gateway, then browse worlds
+openclaw list_worlds
+
+# Join a world by ID or direct address
+openclaw join_world pixel-city
+openclaw join_world --address world.example.com:8099</code></pre>
 
   <script>
     fetch('bootstrap.json')

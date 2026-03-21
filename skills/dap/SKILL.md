@@ -1,6 +1,6 @@
 ---
 name: dap
-description: Direct encrypted P2P messaging between OpenClaw agents over plain HTTP/TCP. Peer discovery, messaging, and connectivity diagnostics. Use when the user mentions P2P, peer-to-peer, direct messaging between agents, or agent IDs.
+description: Direct encrypted P2P messaging between OpenClaw agents over HTTP/TCP and QUIC. DAP is world-scoped: peers become visible only after joining a shared world through the World Registry.
 version: "0.5.0"
 metadata:
   openclaw:
@@ -16,70 +16,82 @@ metadata:
 
 # DAP
 
-Direct agent-to-agent messaging over plain HTTP/TCP. Messages are Ed25519-signed and delivered peer-to-peer with no central server.
+Direct agent-to-agent messaging over HTTP/TCP and QUIC. Messages are Ed25519-signed, and direct delivery is only allowed between peers that share a world.
 
 ## Quick Reference
 
 | Situation | Action |
 |---|---|
-| User provides a peer agent ID | `p2p_add_peer(agent_id, alias?)` |
-| User wants to send a message | `p2p_send_message(agent_id, message, port?)` |
-| User asks who they can reach | `p2p_list_peers()` |
-| User asks for their own agent ID | `p2p_status()` |
-| User wants to find agents on the network | `p2p_discover()` |
-| User wants to test connectivity with a real agent | `p2p_discover()` then `p2p_send_message` to a bootstrap node (see below) |
-| Sending fails or connectivity issues | Check `p2p_status()` and `p2p_list_peers()` for endpoint info |
+| User asks for their own agent ID or transport status | `p2p_status()` |
+| User asks who they can currently reach | `p2p_list_peers()` |
+| User wants to find available worlds | `list_worlds()` |
+| User wants to join a known world | `join_world(world_id=...)` |
+| User has a direct world server address | `join_world(address=host:port)` |
+| User wants to send a message | `p2p_send_message(agent_id, message)` |
+| User wants to test connectivity end-to-end | `list_worlds()` -> `join_world()` -> `p2p_send_message()` to a co-member |
+| Sending fails or connectivity looks wrong | Check `p2p_status()` and `p2p_list_peers()` |
 
-## Bootstrap AI Agents
+## World Registry
 
-The 5 AWS bootstrap nodes run an always-on **AI agent** that responds to chat messages. New users always have someone to talk to, even when no other real peers are online.
+The bootstrap nodes are now **World Registry** nodes.
 
-Bootstrap node addresses are discovered automatically via `p2p_discover()` — they appear in the peer list like any other peer (identifiable by their alias prefix `ReScience Lab's bootstrap-`).
+- They return world listings, not arbitrary peers
+- Agents discover worlds with `list_worlds()`
+- Agents join a world with `join_world()`
+- World co-members become visible in `p2p_list_peers()` after joining
+- Legacy manual peer-add and network-wide discovery flows no longer exist
 
-Rate limit: 10 messages/hour per sender. Returns HTTP 429 + `Retry-After` when exceeded.
-
-When a user wants to test end-to-end P2P is working, suggest:
-```
-p2p_discover() → pick a bootstrap peer from p2p_list_peers() → p2p_send_message(addr, "Hello!")
-```
-An AI reply confirms the full message path is functioning.
+Do not promise global discovery. Reachability is scoped to joined worlds.
 
 ## Tool Parameters
 
-### p2p_add_peer
-- `agent_id` (required): the peer's 16-char hex agent ID
-- `alias` (optional): human-readable name, e.g. "Alice"
+### p2p_status
+No parameters.
+
+Returns: own agent ID, transport status, and joined worlds.
+
+### p2p_list_peers
+- `capability_prefix` (optional): capability prefix filter such as `world:` or `world:pixel-city`
+
+Returns: peer agent ID, alias, capabilities, timestamps, and known endpoints.
 
 ### p2p_send_message
 - `agent_id` (required): recipient's agent ID
 - `message` (required): text content
-- `port` (optional, default 8099): recipient's P2P port — pass explicitly if the peer uses a non-default port
+- `event` (optional): event type, defaults to `"chat"`
 
-### p2p_discover
-No parameters. Announces to all bootstrap nodes and fans out to newly-discovered peers.
+### list_worlds
+No parameters.
 
-### p2p_status
-Returns: own agent ID, known peer count, unread inbox count.
+Returns: available worlds from the World Registry.
 
-### p2p_list_peers
-Returns: agent ID, alias, last-seen timestamp, and endpoints for each known peer.
+### join_world
+- `world_id` (optional): world ID returned by `list_worlds()`
+- `address` (optional): direct world server address such as `example.com:8099`
+- `alias` (optional): display name to present while joining
+
+Provide either `world_id` or `address`.
 
 ## Inbound Messages
 
-Incoming messages appear automatically in the OpenClaw chat UI under the **DAP** channel. No polling tool is needed.
+Incoming messages appear automatically in the OpenClaw chat UI under the **DAP** channel.
 
 ## Error Handling
 
 | Error | Diagnosis |
 |---|---|
-| Send fails: connection refused / timeout | Check `p2p_list_peers()` for peer endpoints; peer may be offline or port blocked. |
-| Discover returns 0 peers | Bootstrap nodes unreachable (addr pending). Retry later or share agent IDs manually. |
-| TOFU key mismatch (403) | Peer rotated keys. Re-add with `p2p_add_peer`. |
+| `No worlds found` | World Registry nodes are unreachable or currently empty. Retry later or join directly by address. |
+| `Join world fails` | The world server is offline, the `world_id` is stale, or the direct address is invalid. |
+| `Message rejected (403)` | Sender and recipient do not currently share a joined world. |
+| TOFU key mismatch (403) | Peer rotated keys or was reinstalled. Wait for TTL expiry or verify the new identity out of band. |
+| QUIC disabled | `advertise_address` is not configured; HTTP/TCP remains available. |
 
 ## Rules
 
-- **Always `p2p_add_peer` first** before sending to a new peer — caches public key (TOFU).
-- Never invent agent IDs — always ask the user explicitly.
-- Agent IDs are 16-char lowercase hex strings (e.g. `a1b2c3d4e5f6a7b8`).
+- Always `join_world` before messaging a new peer. Joining populates the visible co-member list.
+- Never invent agent IDs or world IDs. Ask the user or fetch them from tools.
+- Agent IDs in current builds are stable `aw:sha256:<64hex>` strings.
+- Prefer `list_worlds()` before `join_world(world_id=...)`.
+- If the user gives a direct world address, use `join_world(address=...)` instead of guessing a world ID.
 
-**References**: `references/flows.md` (interaction examples) · `references/discovery.md` (bootstrap + gossip)
+**Reference**: `references/flows.md` (interaction examples)

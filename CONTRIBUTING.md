@@ -92,25 +92,26 @@ Look for issues labeled [`good first issue`](https://github.com/ReScienceLab/DAP
 ### What We Look For in PRs
 
 - Tests for new functionality
-- No regressions (all 44+ existing tests pass)
+- No regressions (all 151+ existing tests pass)
 - Clear commit message explaining *why*, not just *what*
 - No secrets, keys, or sensitive data
 
 ## Architecture Quick Reference
 
 ```
-src/index.ts          → Plugin entry point (service, CLI, tools)
-src/peer-server.ts    → Inbound HTTP (Fastify): /peer/message, /peer/announce, /peer/ping
+src/index.ts          → Plugin entry, service lifecycle, world membership tracking, tools
+src/peer-server.ts    → Inbound HTTP (Fastify) with world co-membership enforcement
 src/peer-client.ts    → Outbound signed messages
-src/peer-discovery.ts → Bootstrap + gossip discovery loop
 src/peer-db.ts        → JSON peer store with TOFU
-src/identity.ts       → Ed25519 keypair, agentId derivation, DID key
-src/transport.ts      → Transport abstraction + TransportManager
-src/transport-quic.ts → QUIC/UDP transport backend
+src/identity.ts       → Ed25519 keypair, agentId derivation
+src/address.ts        → Direct peer address parsing utilities
+src/transport.ts      → Transport interface + TransportManager
+src/transport-quic.ts → UDPTransport with ADVERTISE_ADDRESS endpoint config
+src/channel.ts        → OpenClaw channel adapter
 src/types.ts          → Shared interfaces
 ```
 
-Trust model (3-layer): Ed25519 signature → TOFU key pinning → agentId binding.
+Trust model (4-layer): Ed25519 signature → TOFU key pinning → agentId binding → world co-membership.
 
 ## Questions?
 

@@ -1,50 +1,70 @@
-# Peer Discovery
+# World Registry And Membership
 
-Agents discover each other automatically via bootstrap + gossip. No LLM tokens are consumed — it is pure HTTP + Ed25519 signing.
+DAP no longer uses global bootstrap gossip. Discovery is now world-scoped.
 
 ## How it works
 
-1. On startup (after a configurable delay), the plugin fetches the bootstrap node list from `https://resciencelab.github.io/DAP/bootstrap.json`
-2. It POST /peer/announce (Ed25519-signed) to each bootstrap node and receives their peer table
-3. It "fans out" — announcing to up to 5 newly-discovered peers so they learn about us
-4. A periodic gossip loop (default 10 min) re-announces to random known peers to keep the table fresh
+1. `list_worlds()` queries the World Registry nodes listed in `https://resciencelab.github.io/DAP/bootstrap.json`
+2. Registry nodes return world server registrations, not arbitrary peers
+3. `join_world()` contacts a world server by `world_id` or direct `address`
+4. The world server returns world metadata plus a member list
+5. DAP stores those members locally and only allows direct transport to peers that share at least one joined world
+6. Joined worlds are refreshed periodically so membership changes revoke or grant reachability
 
-Any node running the plugin also serves `/peer/announce` and `/peer/peers`, so the network self-heals.
+## World Registry
 
-## Bootstrap nodes
+World Registry nodes:
 
-5 bootstrap nodes across AWS regions. Current addresses are fetched from [`https://resciencelab.github.io/DAP/bootstrap.json`](https://resciencelab.github.io/DAP/bootstrap.json) at startup; hardcoded fallbacks are used when unreachable.
+- accept registrations from world servers
+- expose available worlds through their `/worlds` API
+- do not make ordinary agents globally discoverable
 
-Bootstrap nodes are identifiable in the peer list by their alias prefix: `ReScience Lab's bootstrap-<addr-prefix>`.
+## Direct Join
 
-## Bootstrap AI agent
+If the registry is empty or unavailable, a user can still connect directly:
 
-Each bootstrap node also accepts `POST /peer/message` (same Ed25519-signed protocol as regular peer messages). On receiving a chat message, it generates an AI reply and sends a signed response back to the sender's `/peer/message` endpoint.
+```text
+join_world(address="example.com:8099")
+```
 
-- **Rate limit**: 10 messages/hour per sender address (HTTP 429 + `Retry-After` when exceeded)
-- **Stateless**: each message is handled independently — no conversation history is maintained
-- **Leave tombstone**: a `leave` event removes the sender from the bootstrap's peer table (standard protocol)
+That flow bypasses the registry lookup and talks to the world server directly.
 
 ## Configuration
 
 ```json
 {
-  "dap": {
-    "config": {
-      "bootstrap_peers": ["1.2.3.4"],
-      "discovery_interval_ms": 600000,
-      "startup_delay_ms": 5000
+  "plugins": {
+    "entries": {
+      "dap": {
+        "config": {
+          "peer_port": 8099,
+          "quic_port": 8098,
+          "advertise_address": "vpn.example.com",
+          "advertise_port": 4433,
+          "data_dir": "~/.openclaw/dap",
+          "tofu_ttl_days": 7,
+          "agent_name": "Alice's coder"
+        }
+      }
     }
   }
 }
 ```
 
-- `bootstrap_peers`: extra HTTP addresses to announce to (merged with remote list)
-- `discovery_interval_ms`: gossip loop interval (default 10 min)
-- `startup_delay_ms`: wait before first bootstrap (default 5s)
+Removed settings:
+
+- `bootstrap_peers`
+- `discovery_interval_ms`
+- `startup_delay_ms`
+
+Removed tools:
+
+- `p2p_add_peer`
+- `p2p_discover`
 
 ## Trust model
 
-- Ed25519 signature must be valid over the canonical JSON payload
-- `from` field (agentId) must match the sha256 of the sender's public key
-- TOFU: first message from an agentId caches the public key; subsequent messages must use the same key. A mismatch returns 403.
+- Ed25519 signatures must be valid over the canonical payload
+- `from` must match the derived `aw:sha256:<64hex>` agent ID of the sender's public key
+- TOFU caches public keys per agent ID with TTL
+- Transport rejects messages unless sender and recipient are co-members of a shared world

@@ -1,8 +1,8 @@
-# DeClaw Architecture: Three-Layer Separation + Transport Abstraction
+# DAP Architecture: World-Scoped Discovery + Transport Enforcement
 
-> **Status**: RFC (Request for Comments)
-> **Date**: 2026-03-08
-> **Scope**: Core protocol refactor — identity, discovery, transport
+> **Status**: Implemented
+> **Date**: 2026-03-21
+> **Scope**: Identity, World Registry, world membership, transport enforcement
 
 ---
 
@@ -10,209 +10,137 @@
 
 ### 1.1 Ed25519 Keypair Is the Only Anchor
 
-The Ed25519 keypair is the single source of truth for agent identity. Everything else — network addresses, transport protocols, endpoint URLs — is transient and derived.
+The Ed25519 keypair is the single durable identity anchor for an agent. Addresses, transports, and world membership are all runtime state layered on top.
 
-```
+```text
 Ed25519 Keypair (permanent)
     │
-    ├── Agent ID = hex(sha256(publicKey))[:32]     // identity
-    ├── did:key = did:key:z6Mk<base58(publicKey)>  // W3C interop
-    ├── Signature / Verification                    // trust anchor
+    ├── agentId = aw:sha256:<sha256(publicKey)>
+    ├── did:key = did:key:z6Mk...
+    ├── Signature / Verification
     │
-    └── Addresses (ephemeral, transport-dependent)
-        ├── quic://1.2.3.4:9000
-        └── tcp://10.0.0.5:8099
+    └── Runtime State
+        ├── advertised QUIC endpoint
+        ├── HTTP/TCP endpoint
+        └── joined worlds
 ```
 
-An agent's identity never changes. Its addresses can change every second.
+An agent's identity is stable. Reachability is not.
 
 ### 1.2 Three-Layer Separation
 
-```
-┌─────────────────────────────────────────────┐
-│  Identity Layer                             │
-│  Ed25519 keypair · Agent ID · Signatures    │
-│  Key rotation · did:key                     │
-├─────────────────────────────────────────────┤
-│  Discovery Layer                            │
-│  Agent ID → Endpoint list mapping           │
-│  DHT gossip · Bootstrap · Capability search │
-├─────────────────────────────────────────────┤
-│  Transport Layer                            │
-│  Pluggable: QUIC · TCP · Tailscale         │
-│  Connection · Byte delivery · NAT traversal │
-└─────────────────────────────────────────────┘
+```text
+┌──────────────────────────────────────────────┐
+│ Identity Layer                              │
+│ Ed25519 keypair · agentId · signatures      │
+│ did:key · TOFU                              │
+├──────────────────────────────────────────────┤
+│ Discovery Layer                             │
+│ World Registry · World membership           │
+│ Capability search                           │
+├──────────────────────────────────────────────┤
+│ Transport Layer                             │
+│ QUIC/UDP · TCP/HTTP · future Tailscale      │
+│ Endpoint delivery                           │
+└──────────────────────────────────────────────┘
 ```
 
-Each layer has a single responsibility:
-- **Identity**: who am I, how to prove it
-- **Discovery**: where is agent X right now
-- **Transport**: how to send bytes from A to B
+Each layer has one job:
+
+- **Identity**: who the sender is and how that claim is verified
+- **Discovery**: which worlds exist and which peers are visible through them
+- **Transport**: how bytes get from one endpoint to another
 
 ### 1.3 Transport Priority
 
+```text
+Priority 0: QUIC/UDP   (fast path when a public endpoint is explicitly advertised)
+Priority 1: TCP/HTTP   (universal fallback on peer_port)
+Future:     Tailscale  (private overlay / ACL-managed networks)
 ```
-Priority 0:  QUIC/UDP   (default — zero install, works everywhere, STUN NAT traversal)
-Priority 1:  TCP/HTTP   (universal fallback — no extra dependencies)
-Future:      Tailscale  (ACL management, corporate networks)
-```
+
+QUIC public reachability is configured explicitly with `ADVERTISE_ADDRESS` / `advertise_address` and optionally `ADVERTISE_PORT` / `advertise_port`.
 
 ---
 
 ## 2. Identity Layer
 
-### 2.1 Identity Interface (v2)
+### 2.1 Identity Interface
 
 ```typescript
 interface Identity {
-  agentId: string       // hex(sha256(publicKey))[:32] — permanent
-  publicKey: string     // base64 Ed25519 public key
-  privateKey: string    // base64 Ed25519 private key (never leaves local storage)
+  agentId: string
+  publicKey: string
+  privateKey: string
 }
 ```
 
-Removed from current `Identity`:
-- `cgaIpv6` — CGA address was Yggdrasil-specific, no longer part of identity
-- `yggIpv6` — Yggdrasil-derived address moves to transport layer
+Legacy identity fields derived from network topology are gone. The identity object now contains only Ed25519 material and the derived `agentId`.
 
 ### 2.2 did:key Mapping
 
-Agent's Ed25519 public key maps to W3C DID format for ecosystem interop:
+The public key is also exposed as a `did:key` for ecosystem interop:
 
-```
-Ed25519 public key (32 bytes)
-  → Multicodec prefix 0xed01 + public key bytes
-  → Base58-btc encode with 'z' prefix
-  → did:key:z6Mk...
-```
-
-This is a pure derivation (no state, no registration). Any agent can compute another agent's DID from its public key.
-
-### 2.3 Key Rotation
-
-Current limitation: TOFU binds a public key to an agent forever. If the key is compromised or the agent reinstalls, all peers must manually remove and re-add.
-
-Solution: **signed key rotation message**.
-
-```typescript
-interface KeyRotation {
-  agentId: string
-  oldPublicKey: string       // the key being retired
-  newPublicKey: string       // the replacement key
-  timestamp: number
-  signatureByOldKey: string  // old key signs the rotation
-  signatureByNewKey: string  // new key also signs (proves possession)
-}
+```text
+Ed25519 public key
+  -> multicodec prefix 0xed01
+  -> base58-btc encode
+  -> did:key:z6Mk...
 ```
 
-Both the old and new key sign the rotation record. Peers who receive it update their TOFU cache. The rotation record is gossiped like any other announcement.
+### 2.3 TOFU With TTL
 
-### 2.4 TOFU TTL
+Peer bindings are cached as `agentId -> publicKey` with a configurable TTL.
 
-Public key bindings in peer-db expire after a configurable TTL (default: 7 days). After expiry, the next message from that agent triggers a fresh TOFU handshake. This limits the damage window of a compromised key.
+- first verified contact creates the binding
+- later contacts must present the same public key
+- expired bindings are re-verified on the next valid contact
 
 ---
 
 ## 3. Discovery Layer
 
-### 3.1 PeerRecord (v2)
+### 3.1 World Registry
 
-```typescript
-interface Endpoint {
-  transport: "quic" | "tailscale" | "tcp"
-  address: string       // transport-specific: "1.2.3.4:9000" or "200:xxxx::xxxx"
-  port: number
-  priority: number      // lower = preferred (0 = best)
-  ttl: number           // seconds until this endpoint should be re-resolved
-}
+Registry nodes answer one question:
 
-interface PeerRecord {
-  agentId: string       // primary key (replaces yggAddr)
-  publicKey: string
-  alias: string
-  endpoints: Endpoint[]
-  capabilities: string[]  // e.g. ["code-review", "translate-ja"]
-  firstSeen: number
-  lastSeen: number
-}
+```text
+What worlds can this agent join?
 ```
 
-Key changes from v1:
-- `agentId` is the primary key (was `yggAddr`)
-- `endpoints[]` array replaces single `yggAddr`
-- `capabilities[]` enables discovery by skill
-- `ttl` per endpoint supports mixed refresh rates
+They do not return general peer tables and they do not make ordinary agents globally visible.
 
-### 3.2 P2PMessage (v2)
+### 3.2 Joined World State
 
-```typescript
-interface P2PMessage {
-  from: string          // sender's agentId (was fromYgg)
-  publicKey: string
-  event: string
-  content: string
-  timestamp: number
-  signature: string     // Ed25519 over canonical JSON (all fields except signature)
-}
+Joined world state is tracked in `src/index.ts`:
+
+- `_joinedWorlds` stores the world server identity and address for each joined world
+- `_worldMembersByWorld` stores the current co-member set per world
+- `_worldScopedPeerWorlds` tracks which peers remain reachable because of which worlds
+
+### 3.3 Peer DB View
+
+The peer database remains the local routing table, but world membership is now what populates it for remote agents.
+
+- `list_worlds()` merges registry results with cached `world:` capability entries
+- `join_world()` stores the world server and member list in peer DB
+- the peer list only becomes useful after a world has been joined
+
+### 3.4 World-Based Discovery Protocol
+
+Legacy network-wide discovery is gone. Discovery now works like this:
+
+```text
+1. Agent starts and loads identity
+2. Agent queries the World Registry via list_worlds()
+3. Agent joins a world via join_world(world_id) or join_world(address)
+4. World Server returns member list (agentId + alias + endpoints)
+5. Agent stores co-members in peer DB
+6. Periodic member refresh (30s) keeps membership current
+7. To reach Agent B, A and B must be co-members of a shared world
 ```
 
-Key change: `fromYgg` → `from` (agent ID, transport-independent). Source IP verification moves to the transport layer.
-
-### 3.3 PeerAnnouncement (v2)
-
-```typescript
-interface PeerAnnouncement {
-  from: string              // announcer's agentId
-  publicKey: string
-  alias?: string
-  version?: string
-  endpoints: Endpoint[]     // announcer's own endpoints (signed)
-  capabilities?: string[]
-  timestamp: number
-  signature: string
-  peers: Array<{
-    agentId: string
-    publicKey: string
-    alias?: string
-    endpoints: Endpoint[]
-    lastSeen: number
-  }>
-}
-```
-
-Key changes:
-- Announcements carry endpoint lists instead of single addresses
-- Each agent declares its own reachable endpoints
-- Gossip propagates multi-transport endpoint info
-
-### 3.4 DHT Gossip Protocol (v2)
-
-The gossip protocol becomes transport-agnostic:
-
-```
-1. Agent A starts
-2. A registers its endpoints: [{transport:"quic", addr:"1.2.3.4:9000", priority:0}]
-3. A contacts bootstrap nodes via ANY available transport
-4. Bootstrap returns peer list with endpoint arrays
-5. A stores: agentId → endpoints[] mapping
-6. Periodic gossip: A picks random peers, exchanges endpoint lists
-7. To reach Agent B: lookup B's endpoints, try by priority order
-```
-
-Bootstrap nodes MUST support multiple transports (at minimum: QUIC + Yggdrasil) to serve all agent types.
-
-### 3.5 Capability-Based Discovery
-
-Agents declare capabilities in their announcements. Discovery supports filtering:
-
-```typescript
-// Find agents that can do code review
-const reviewers = listPeers().filter(p =>
-  p.capabilities.includes("code-review")
-)
-```
-
-Capability strings follow a simple namespace convention: `domain:skill` (e.g., `code:review`, `lang:translate-ja`, `data:visualize`).
+Capability filtering still exists, but it is applied to peers already known through joined worlds or cached world entries.
 
 ---
 
@@ -220,90 +148,37 @@ Capability strings follow a simple namespace convention: `domain:skill` (e.g., `
 
 ### 4.1 Transport Interface
 
-```typescript
-interface Transport {
-  readonly id: string                     // "quic" | "yggdrasil" | "tailscale" | "tcp"
+`src/transport.ts` defines the transport abstraction used by DAP:
 
-  start(config: TransportConfig): Promise<TransportHandle>
-  stop(): Promise<void>
+- transport identity (`quic`, `tcp`, future transports)
+- startup / shutdown lifecycle
+- endpoint advertisement
+- send and receive hooks
 
-  // What endpoints does this transport provide for the local agent?
-  getLocalEndpoints(): Endpoint[]
+`TransportManager` owns the active transport set and exposes the best currently available endpoint list.
 
-  // Send raw bytes to a specific endpoint
-  send(endpoint: Endpoint, data: Buffer): Promise<void>
+### 4.2 QUIC Transport
 
-  // Register handler for incoming data
-  onData(handler: (fromEndpoint: Endpoint, data: Buffer) => void): void
-}
+`src/transport-quic.ts` currently provides the optional UDP-based fast path.
 
-interface TransportConfig {
-  identity: Identity
-  port: number
-  // Transport-specific options
-  [key: string]: unknown
-}
+Key properties:
 
-interface TransportHandle {
-  endpoints: Endpoint[]
-}
-```
+- UDP listener on `quic_port`
+- endpoint config requires `ADVERTISE_ADDRESS` / `advertise_address` for public endpoint advertisement
+- `ADVERTISE_PORT` / `advertise_port` overrides the advertised UDP port when needed
+- no automatic public-endpoint discovery
 
-### 4.2 QUIC Transport (Default)
+If no advertised public endpoint is configured, QUIC is disabled and DAP continues in HTTP/TCP-only mode.
 
-```typescript
-class QuicTransport implements Transport {
-  readonly id = "quic"
+### 4.3 HTTP/TCP Fallback
 
-  // Uses UDP socket, no daemon required
-  // NAT traversal via STUN (bootstrap nodes double as STUN servers)
-  // TLS 1.3 built into QUIC — Ed25519 cert for mutual auth
-  // 0-RTT reconnection to known peers
-}
-```
+`src/peer-server.ts` always exposes the HTTP interface on `peer_port`:
 
-QUIC transport characteristics:
-- **Zero install**: uses Node.js UDP/QUIC support
-- **NAT traversal**: bootstrap nodes serve as STUN/rendezvous
-- **Performance**: 0-RTT, multiplexed streams, no head-of-line blocking
-- **Security**: TLS 1.3 with Ed25519 client certificates
+- `GET /peer/ping`
+- `POST /peer/announce`
+- `POST /peer/message`
 
-### 4.3 Transport Manager
-
-```typescript
-class TransportManager {
-  private transports: Map<string, Transport> = new Map()
-  private activeTransports: Transport[] = []
-
-  // Auto-detect and start available transports
-  async autoStart(identity: Identity, port: number): Promise<Endpoint[]> {
-    // 1. Always try QUIC (no dependencies)
-    await this.startTransport(new QuicTransport(), { identity, port })
-
-    // 2. TCP/HTTP fallback (always available)
-    await this.startTransport(new TcpTransport(), { identity, port })
-
-    // Return all endpoints from all active transports
-    return this.getAllEndpoints()
-  }
-
-  // Send to a peer: try endpoints by priority
-  async sendToPeer(endpoints: Endpoint[], data: Buffer): Promise<boolean> {
-    const sorted = endpoints.sort((a, b) => a.priority - b.priority)
-    for (const ep of sorted) {
-      const transport = this.transports.get(ep.transport)
-      if (!transport) continue
-      try {
-        await transport.send(ep, data)
-        return true
-      } catch {
-        continue // try next endpoint
-      }
-    }
-    return false
-  }
-}
-```
+This is the universal fallback path and the default world-join transport.
 
 ---
 
@@ -311,55 +186,51 @@ class TransportManager {
 
 ### 5.1 Agent Startup
 
-```
-1. Load/create Ed25519 keypair → derive agentId
-2. TransportManager.autoStart()
-   → Start QUIC listener (always)
-   → Start TCP/HTTP listener (always)
-   → Collect all local endpoints
-3. Start peer-server (HTTP API on all transports)
-4. Bootstrap discovery:
-   → Announce {agentId, endpoints[], capabilities} to bootstrap nodes
-   → Receive peer list with multi-transport endpoints
-5. Start gossip loop
+```text
+1. Load or create Ed25519 keypair -> derive agentId
+2. Initialize peer DB and TOFU TTL
+3. Start transport manager and optional QUIC transport
+4. Start HTTP peer server and register tools + DAP channel
+5. No automatic bootstrap runs at startup; agent uses list_worlds / join_world tools
+6. World membership provides peer discovery through the member list returned on join
+7. World membership refresh keeps the routing table current every 30 seconds
 ```
 
 ### 5.2 Agent-to-Agent Communication
 
-```
-Agent A wants to send a message to Agent B (known by agentId):
+```text
+Agent A wants to message Agent B:
 
-1. Lookup B in peer-db → get B's endpoint list
-2. Sort endpoints by priority
-3. Try best endpoint:
-   → QUIC endpoint (priority 0)? → send via QUIC
-   → Failed? → TCP endpoint (priority 1)? → send via TCP
-   → Failed? → relay via bootstrap node
-4. Message format: P2PMessage v2 (agentId-based, transport-independent)
-5. Recipient verifies Ed25519 signature
-6. Recipient TOFU-checks agentId ↔ publicKey binding
+1. A joins a world and receives a member list
+2. B is now present in peer DB with known endpoints
+3. A sends a signed direct message to B over QUIC or HTTP/TCP
+4. B verifies identity, signature, TOFU binding, and shared-world membership
+5. If A and B no longer share a world, B rejects the message with 403
 ```
 
 ### 5.3 Trust Model (v2)
 
-```
-Layer 1 — Transport Security
-  QUIC: TLS 1.3 encryption
-  TCP: plaintext (trust provided by application layer)
-  Tailscale: WireGuard encryption
+```text
+Layer 1 — Transport Exposure
+  QUIC endpoint is advertised explicitly
+  HTTP/TCP remains the universal fallback
 
 Layer 2 — Application Signature
-  Ed25519 signature over canonical JSON (same across ALL transports)
-  from field (agentId) must equal sha256(publicKey)[:32]
+  Ed25519 signature over canonical JSON
+  sender agentId must match the sender public key derivation
 
-Layer 3 — TOFU with TTL
-  First contact: cache agentId → publicKey binding
-  Subsequent: publicKey must match cached binding
-  TTL: binding expires after 7 days (re-verified on next contact)
-  Key rotation: signed migration from old key to new key
+Layer 3 — TOFU With TTL
+  First contact caches agentId -> publicKey
+  Later contacts must match the cached binding
+  TTL expiry allows re-verification
+
+Layer 4 — World Co-membership
+  Transport layer verifies worldId on every inbound message
+  Messages without worldId or from non-co-members are rejected with 403
+  Agents are invisible to each other unless they share a world
 ```
 
-Layer 2 (Ed25519 signature) is the universal trust anchor. It works identically regardless of transport. No network-layer IP filtering is required.
+Layer 4 is the main architectural change relative to the old global peer mesh.
 
 ---
 
@@ -367,62 +238,36 @@ Layer 2 (Ed25519 signature) is the universal trust anchor. It works identically 
 
 ### 6.1 File-by-File Changes
 
-| File | Current | Target |
-|------|---------|--------|
-| `types.ts` | `Identity` has `cgaIpv6`/`yggIpv6`; `PeerRecord` keyed by `yggAddr`; `P2PMessage.fromYgg` | `Identity` has `agentId` only; `PeerRecord` keyed by `agentId` with `endpoints[]`; `P2PMessage.from` is agentId |
-| `identity.ts` | Derives CGA/Ygg addresses | Pure Ed25519 + agentId derivation; add `did:key` mapping; add key rotation signing; address derivation moves to transports |
-| `peer-db.ts` | Keyed by `yggAddr`; TOFU by yggAddr | Keyed by `agentId`; TOFU by agentId; add TTL expiry; add endpoint list storage |
-| `peer-server.ts` | Hardcoded Yggdrasil IP check; `fromYgg` validation | Transport-agnostic message handler; transport-specific source validation delegated to transport layer |
-| `peer-client.ts` | `http://[yggAddr]:port` hardcoded | Route via TransportManager; try endpoints by priority |
-| `peer-discovery.ts` | Yggdrasil addresses throughout; `fromYgg` in announcements | `agentId` + `endpoints[]` throughout; transport-agnostic gossip |
-| `yggdrasil.ts` | Standalone module | **Removed** (Yggdrasil dependency dropped) |
-| `channel.ts` | Peer addresses as account IDs | Agent IDs as account IDs |
-| `index.ts` | Yggdrasil startup inline; transport-specific logic scattered | Delegates to TransportManager; transport-agnostic service lifecycle |
+| File | Current role / status |
+|------|------------------------|
+| `src/index.ts` | Plugin entry, service lifecycle, world membership tracking, tool registration, 30s member refresh loop |
+| `src/address.ts` | Direct peer address parsing utilities |
+| `src/identity.ts` | Ed25519 identity, `agentId` derivation, and `did:key` mapping |
+| `src/peer-db.ts` | Local JSON peer store with TOFU TTL and endpoint storage |
+| `src/peer-server.ts` | Fastify HTTP endpoints with inbound world co-membership enforcement |
+| `src/peer-client.ts` | Signed outbound HTTP messages and peer/world ping helpers |
+| `src/transport.ts` | Transport interface and `TransportManager` |
+| `src/transport-quic.ts` | UDP transport with explicit advertised endpoint config |
+| `src/channel.ts` | OpenClaw channel adapter keyed by agent identity |
+| `src/types.ts` | Shared identity, peer, transport, and config types |
+| `src/peer-discovery.ts` | **Removed**. Global gossip discovery no longer exists. |
 
-### 6.2 New Files
+### 6.2 Registry And World Components
 
 | File | Purpose |
 |------|---------|
-| `src/transport.ts` | `Transport` interface + `TransportManager` + `Endpoint` type |
-| `src/transport-quic.ts` | `QuicTransport` implementation |
-| `src/transport-quic.ts` | `UDPTransport` (QUIC/UDP transport backend) |
-
-### 6.3 Migration Order
-
-```
-Phase 1: Interface definition (non-breaking)
-  1. Add Transport interface in transport.ts
-  2. Add new types (Endpoint, PeerRecord v2) alongside old types
-  3. Add did:key derivation to identity.ts
-
-Phase 2: Core refactor (breaking)
-  4. Refactor peer-db to key by agentId + support endpoints[]
-  5. Refactor P2PMessage to use agentId
-  6. Refactor peer-discovery to be transport-agnostic
-  7. Wrap existing Yggdrasil code in YggdrasilTransport
-  8. Refactor peer-server source verification
-
-Phase 3: QUIC (new feature)
-  9. Implement QuicTransport
-  10. Implement TransportManager with auto-detection
-  11. Update bootstrap nodes to support QUIC
-  12. Update index.ts to use TransportManager
-
-Phase 4: Polish
-  13. Key rotation support
-  14. TOFU TTL
-  15. Capability-based discovery
-```
+| `bootstrap/server.mjs` | World Registry server deployed on AWS |
+| `docs/bootstrap.json` | Published list of World Registry nodes |
 
 ---
 
-## 7. Wire Protocol v2
+## 7. Wire Model
 
-### 7.1 P2PMessage JSON Schema
+### 7.1 Peer Message
 
 ```json
 {
-  "from": "a3f8c0e1b2d749568f7e3c2b1a09d456",
+  "from": "aw:sha256:...",
   "publicKey": "base64...",
   "event": "chat",
   "content": "Hello from Agent A",
@@ -431,68 +276,40 @@ Phase 4: Polish
 }
 ```
 
-### 7.2 PeerAnnouncement JSON Schema
+### 7.2 World Join Result
 
 ```json
 {
-  "from": "a3f8c0e1b2d749568f7e3c2b1a09d456",
-  "publicKey": "base64...",
-  "alias": "Alice's coder",
-  "version": "0.3.0",
-  "endpoints": [
-    { "transport": "quic", "address": "1.2.3.4", "port": 9000, "priority": 0, "ttl": 300 },
-    { "transport": "tcp", "address": "1.2.3.4", "port": 8099, "priority": 1, "ttl": 3600 }
-  ],
-  "capabilities": ["code:review", "lang:translate-ja"],
-  "timestamp": 1709900000000,
-  "signature": "base64...",
-  "peers": [
+  "ok": true,
+  "worldId": "pixel-city",
+  "manifest": {
+    "name": "Pixel City",
+    "type": "hosted"
+  },
+  "members": [
     {
-      "agentId": "b7e2d1f09c384a128e5f6d0a3c917b24",
-      "publicKey": "base64...",
-      "alias": "Bob's reviewer",
+      "agentId": "aw:sha256:...",
+      "alias": "Alice",
       "endpoints": [
-        { "transport": "quic", "address": "5.6.7.8", "port": 9000, "priority": 0, "ttl": 300 }
-      ],
-      "lastSeen": 1709899000000
+        { "transport": "tcp", "address": "host.example.com", "port": 8099, "priority": 1, "ttl": 3600 }
+      ]
     }
   ]
 }
 ```
 
-### 7.3 KeyRotation JSON Schema
-
-```json
-{
-  "agentId": "a3f8c0e1b2d749568f7e3c2b1a09d456",
-  "oldPublicKey": "base64...",
-  "newPublicKey": "base64...",
-  "timestamp": 1709900000000,
-  "signatureByOldKey": "base64...",
-  "signatureByNewKey": "base64..."
-}
-```
+The member list returned by `world.join` is what seeds direct peer reachability.
 
 ---
 
 ## 8. Backward Compatibility
 
-### 8.1 v1 ↔ v2 Interop
+Legacy global discovery (v1/v2) is fully removed.
 
-v1 (Yggdrasil-only) protocol is no longer supported as of v0.4.x.
+- no `peer-discovery.ts`
+- no bootstrap peer exchange for ordinary agents
+- no manual peer-add or global discovery commands; use `list_worlds` and `join_world`
+- no legacy bootstrap or discovery timing config
+- no automatic endpoint derivation
 
-v2 bootstrap server accepts legacy `fromYgg` field and maps it to `agentId` during transition:
-```
-v2 server receives v1 message (has fromYgg):
-  → Derive agentId = sha256(publicKey)[:32]
-  → Process as if from = agentId
-```
-
-### 8.2 Protocol Version
-
-Announcements include a `version` field:
-
-```
-v1: version "0.2.x" → Yggdrasil-only protocol (deprecated)
-v2: version "0.3.x" → Multi-transport protocol (current)
-```
+Current protocol behavior requires world membership for all peer communication. An agent outside your joined worlds is not visible and is not transport-reachable.

@@ -1,6 +1,6 @@
 # DAP
 
-OpenClaw plugin for direct P2P communication between agent instances over plain HTTP/TCP. Messages are Ed25519-signed at the application layer; peers are identified by agentId (sha256 of public key).
+OpenClaw plugin for direct P2P communication between agent instances over plain HTTP/TCP and optional QUIC. Messages are Ed25519-signed at the application layer, and peers are only visible after joining a shared World.
 
 ## Core Commands
 
@@ -16,24 +16,26 @@ Always run build before tests — tests import from `dist/`.
 
 ```
 ├── src/                        → TypeScript plugin source
-│   ├── index.ts                → Plugin entry: service, channel, CLI, agent tools
+│   ├── index.ts                → Plugin entry: service lifecycle, world membership tracking, tools
 │   ├── identity.ts             → Ed25519 keypair, agentId derivation, DID key
+│   ├── address.ts              → Direct peer address parsing utilities
+│   ├── transport.ts            → Transport interface + TransportManager
+│   ├── transport-quic.ts       → UDPTransport with ADVERTISE_ADDRESS endpoint config
 │   ├── peer-server.ts          → Fastify HTTP server: /peer/message, /peer/announce, /peer/ping
 │   ├── peer-client.ts          → Outbound signed message + ping
-│   ├── peer-discovery.ts       → Bootstrap + gossip DHT discovery loop
 │   ├── peer-db.ts              → JSON peer store with TOFU and debounced writes
 │   ├── channel.ts              → OpenClaw channel registration (inbound/outbound wiring)
 │   └── types.ts                → Shared interfaces
 ├── test/                       → Node.js built-in test runner (node:test)
-├── bootstrap/                  → Standalone bootstrap node (deployed on AWS)
-│   ├── server.mjs              → Pure ESM, fastify + tweetnacl only
+├── bootstrap/                  → World Registry server (deployed on AWS)
+│   ├── server.mjs              → World Registry server (deployed on AWS)
 │   ├── Dockerfile              → node:22-alpine container
 │   └── package.json            → Minimal deps (no TypeScript)
 ├── skills/dap/              → ClawHub skill definition
 │   ├── SKILL.md                → Skill frontmatter + tool docs
 │   └── references/             → Supplementary docs (flows, discovery, install)
 ├── docs/                       → GitHub Pages assets
-│   └── bootstrap.json          → Dynamic bootstrap node list (fetched by plugin at startup)
+│   └── bootstrap.json          → Dynamic World Registry node list
 ├── openclaw.plugin.json        → Plugin manifest (channels, config schema, UI hints)
 └── docker/                     → Docker Compose for local multi-node testing
 ```
@@ -43,13 +45,16 @@ Always run build before tests — tests import from `dist/`.
 Plugin registers a background service (`dap-node`) that:
 1. Loads/creates an Ed25519 identity (`~/.openclaw/dap/identity.json`)
 2. Starts a Fastify peer server on `[::]:8099`
-3. After 5s delay, bootstraps peer discovery via global AWS nodes
-4. Runs periodic gossip loop (10min interval) to keep routing table fresh
+3. Registers tools (`p2p_status`, `p2p_list_peers`, `p2p_send_message`, `list_worlds`, `join_world`) and the DAP channel
+4. Discovers worlds via `list_worlds()` and joins them via `join_world()`
+5. World membership provides peer discovery — co-members' endpoints arrive from the world server on join
+6. Runs periodic member refresh (30s) to keep world membership current
 
-Trust model (3-layer):
+Trust model (4-layer):
 1. Ed25519 signature over canonical JSON (application-layer)
 2. TOFU: first message caches public key; subsequent must match
 3. agentId derived from public key — unforgeable anchor identity
+4. World co-membership — transport rejects senders outside shared worlds
 
 ## Development Patterns
 
@@ -64,21 +69,26 @@ All runtime config is in `openclaw.json` under `plugins.entries.dap.config`:
 ```json
 {
   "peer_port": 8099,
-  "bootstrap_peers": [],
-  "discovery_interval_ms": 600000,
-  "startup_delay_ms": 5000
+  "quic_port": 8098,
+  "advertise_address": "vpn.example.com",
+  "advertise_port": 4433,
+  "data_dir": "~/.openclaw/dap",
+  "tofu_ttl_days": 7,
+  "agent_name": "Alice's coder"
 }
 ```
 
-### Bootstrap Nodes
+### World Registry Nodes
 - 5 AWS EC2 t3.medium across us-east-2, us-west-2, eu-west-1, ap-northeast-1, ap-southeast-1
 - Managed via AWS SSM (no SSH) — IAM profile `openclaw-p2p-ssm-profile`
 - Deploy: `base64 -i bootstrap/server.mjs` → SSM send-command → restart systemd service
-- Nodes sync peer tables every 5min via sibling announce (HTTP endpoints from bootstrap.json)
+- Nodes serve as a World Registry and only accept world server registrations
+- Individual agent announcements are rejected by the registry
+- World listings are exposed to agents through `list_worlds()` and direct joins happen through `join_world()`
 
 ### Peer DB
 - JSON file at `$data_dir/peers.json`
-- Discovery writes are debounced (1s); manual ops and TOFU writes are immediate
+- World membership / registry writes are debounced (1s); manual ops and TOFU writes are immediate
 - `flushDb()` called on service shutdown
 
 ## Git Workflow
@@ -255,7 +265,8 @@ When adding a changeset, choose accordingly.
   # same loop, but commands: decode package.json + cd + npm install + restart
   ```
 - After deploying, update `docs/bootstrap.json` with the node's public HTTP address (`addr` field).
-- Verify: `curl -s http://<node-public-addr>:8099/peer/ping`
+- Verify: `curl -s http://<node-public-addr>:8099/worlds`
+  Expected response: `{"worlds":[...]}`
 
 ### Version-bearing Files
 

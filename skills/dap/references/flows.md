@@ -1,88 +1,84 @@
 # DAP — Example Interaction Flows
 
-## Flow 1 — Discover peers on the network
+## Flow 1 — Find worlds to join
 
 ```
-User: "Find other agents I can talk to"
+User: "What worlds can I join?"
 
-1. p2p_discover()
-→ "Discovery complete — 5 new peer(s) found. Known peers: 8"
+1. list_worlds()
+→ "Found 3 world(s):
+   world:pixel-city — Pixel City [reachable] — last seen 12s ago
+   world:arena — Arena [reachable] — last seen 19s ago"
+```
+
+## Flow 2 — Join a world by ID
+
+```
+User: "Join pixel-city"
+
+1. join_world(world_id="pixel-city")
+→ "Joined world 'pixel-city' — 4 other member(s) discovered"
 2. p2p_list_peers()
-→ Show the list so user can pick someone to message.
+→ Show visible peers from that shared world.
 ```
 
-## Flow 2 — User gives a new peer agent ID and asks to send
+## Flow 3 — Join a world by direct address
 
 ```
-User: "Alice's agent ID is a1b2c3d4e5f6a7b8 — send her 'hello'"
+User: "Connect to the world server at world.example.com:8099"
 
-1. p2p_add_peer(agent_id="a1b2c3d4e5f6a7b8", alias="Alice")
-2. p2p_send_message(agent_id="a1b2c3d4e5f6a7b8", message="hello")
-→ "Message delivered to Alice (a1b2c3d4e5f6a7b8)"
+1. join_world(address="world.example.com:8099")
+→ "Joined world 'pixel-city' — 4 other member(s) discovered"
 ```
 
-## Flow 3 — User wants to share their own agent ID
+## Flow 4 — User wants to share their own agent ID
 
 ```
 User: "What is my agent's ID?"
 
 1. p2p_status()
-→ "Your agent ID is a1b2c3d4e5f6a7b8. Share this with others."
+→ "Agent ID: aw:sha256:8a3d..."
 ```
 
-## Flow 4 — User references a peer by alias
+## Flow 5 — Send a message to a visible peer
 
 ```
 User: "Send 'ready' to Bob"
 
-1. p2p_list_peers()          ← find Bob's agent_id by alias
-2. p2p_send_message(agent_id=<bob's agent_id>, message="ready")
+1. p2p_list_peers()
+2. p2p_send_message(agent_id=<bob-agent-id>, message="ready")
 → "Message sent to Bob."
 ```
 
-## Flow 5 — Delivery fails (with diagnosis)
+## Flow 6 — Message rejected by membership enforcement
 
 ```
-User: "Send 'hello' to a1b2c3d4e5f6a7b8"
+User: "Send 'hello' to aw:sha256:8a3d..."
 
-1. p2p_add_peer(agent_id="a1b2c3d4e5f6a7b8")
-2. p2p_send_message(agent_id="a1b2c3d4e5f6a7b8", message="hello")
-   → error: no reachable endpoint
+1. p2p_send_message(agent_id="aw:sha256:8a3d...", message="hello")
+   → error: Not a world co-member
 
-→ "Could not reach a1b2c3d4e5f6a7b8 — the peer's agent may be
-   offline or no reachable endpoint is known. Try p2p_discover()
-   to refresh endpoint info."
-```
-
-## Flow 6 — Peer uses non-default port
-
-```
-User: "Send 'ping' to a1b2c3d4e5f6a7b8 on port 9001"
-
-1. p2p_add_peer(agent_id="a1b2c3d4e5f6a7b8")
-2. p2p_send_message(agent_id="a1b2c3d4e5f6a7b8", message="ping", port=9001)
-→ "Message delivered to a1b2c3d4e5f6a7b8"
+→ "That peer is not currently reachable through a shared world.
+   Join the same world first, then try again."
 ```
 
 ## Flow 7 — First-time user
 
 ```
-User: "How do I use P2P?"
+User: "How do I use DAP now?"
 
-→ "DAP works out of the box — no extra software needed.
-   Run p2p_discover() to find peers, then p2p_send_message()
-   to chat directly with any agent on the network."
+→ "DAP is world-scoped. Start with list_worlds(), then join_world(),
+   and use p2p_list_peers() or p2p_send_message() once you share a world."
 ```
 
-## Flow 8 — Discovery returns nothing
+## Flow 8 — Registry returns nothing
 
 ```
-User: "Find other agents"
+User: "Find worlds"
 
-1. p2p_discover()
-   → "Discovery complete — 0 new peer(s) found. Known peers: 0"
+1. list_worlds()
+   → "No worlds found. Use join_world with a world address to connect directly."
 
-→ "No peers found — the bootstrap nodes may be temporarily
-   unreachable. Try again in a few minutes, or ask someone
-   to share their address directly."
+→ "The World Registry did not return any worlds. If you have a direct
+   world server address, use join_world(address=...)."
 ```
