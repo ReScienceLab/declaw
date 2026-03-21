@@ -6,6 +6,7 @@
 - In `gateway/server.mjs`, registry persistence side effects should stay explicit: announce-driven `upsertAgent()` calls opt into debounced saves, while prune/shutdown paths use `flushRegistry()` for immediate durability.
 - In `gateway/server.mjs`, `/peer/message` is relay-only: it should verify and forward `world.state` payloads, but registry membership must come only from `/peer/announce`.
 - In `gateway/server.mjs`, lifecycle cleanup should retain server and timer handles in module scope so signal handlers can flush the registry once, clear intervals, and close listeners idempotently.
+- In `gateway/server.mjs`, `/health` must keep `ok: true` for compatibility while deriving `status` from registry contents: `ready` when `worlds > 0`, `warming` when `agents > 0` but no worlds, and `empty` when the registry is empty.
 
 (Add reusable patterns discovered during implementation here)
 
@@ -51,4 +52,12 @@
   - Gateway shutdown logic should be idempotent because both `SIGTERM` and `SIGINT` can arrive; caching a shared shutdown promise avoids double-closing Fastify instances.
   - Retaining the prune interval handle in module state is necessary so shutdown can stop background work before the process exits naturally.
   - There is no `gateway/AGENTS.md` in this repo, so reusable gateway-specific notes for this area should go into `.hal/progress.txt` unless a local agent guide is added later.
+---
+## 2026-03-21 17:04:10 UTC - US-006
+- Enhanced `/health` in `gateway/server.mjs` to report `registryAge` from tracked registry mutations/load state and to expose compatibility-safe readiness statuses (`ready`, `warming`, `empty`) while preserving `ok: true`.
+- Files changed: `gateway/server.mjs`, `.hal/prd.json`, `.hal/progress.txt`
+- **Learnings for future iterations:**
+  - Health freshness should be tracked separately from persistence writes; `_registryModifiedAt` reflects registry load or mutation time, while `registryAge` becomes `null` whenever the in-memory registry is empty.
+  - Gateway observability changes should stay additive on `/health`; keep the endpoint unauthenticated and backward compatible by preserving `ok: true` and existing top-level fields.
+  - There is still no `gateway/AGENTS.md`, so reusable gateway health conventions belong in `.hal/progress.txt` unless a local guide is introduced later.
 ---

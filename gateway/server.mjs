@@ -73,6 +73,7 @@ const registry = new Map() // agentId -> PeerRecord
 let _saveTimer = null
 let _pruneTimer = null
 let _shutdownPromise = null
+let _registryModifiedAt = null
 
 function writeRegistry() {
   fs.mkdirSync(DATA_DIR, { recursive: true })
@@ -89,6 +90,7 @@ function loadRegistry() {
   if (!fs.existsSync(REGISTRY_PATH)) {
     console.warn(`[gateway] Registry file missing at ${REGISTRY_PATH}; starting with empty registry`)
     registry.clear()
+    _registryModifiedAt = null
     return
   }
 
@@ -117,10 +119,14 @@ function loadRegistry() {
       loaded++
     }
 
+    _registryModifiedAt = loaded > 0
+      ? (typeof raw.savedAt === "number" ? raw.savedAt : Date.now())
+      : null
     console.log(`[gateway] Loaded ${loaded} agents from registry (discarded ${discarded} stale)`)
   } catch (error) {
     console.warn(`[gateway] Failed to load registry from ${REGISTRY_PATH}; starting with empty registry`, error)
     registry.clear()
+    _registryModifiedAt = null
   }
 }
 
@@ -173,6 +179,9 @@ function upsertAgent(agentId, publicKey, opts = {}) {
     const oldest = [...registry.values()].sort((a, b) => a.lastSeen - b.lastSeen)[0]
     registry.delete(oldest.agentId)
     trimmed = true
+  }
+  if (changed || trimmed) {
+    _registryModifiedAt = now
   }
   if (persist && (changed || trimmed)) {
     saveRegistry()
@@ -362,10 +371,25 @@ const app = Fastify({ logger: false });
 await app.register(cors, { origin: true });
 await app.register(websocketPlugin);
 
-app.get("/health", async () => ({
-  ok: true, ts: Date.now(), agentId: selfAgentId,
-  agents: registry.size, worlds: findByCapability("world:").length,
-}));
+app.get("/health", async () => {
+  const ts = Date.now()
+  const worlds = findByCapability("world:").length
+  const agents = registry.size
+  const registryAge = agents > 0 && _registryModifiedAt !== null
+    ? Math.max(0, ts - _registryModifiedAt)
+    : null
+  const status = worlds > 0 ? "ready" : agents > 0 ? "warming" : "empty"
+
+  return {
+    ok: true,
+    ts,
+    agentId: selfAgentId,
+    agents,
+    worlds,
+    registryAge,
+    status,
+  }
+});
 
 // Agent Card — served as canonical JSON so bytes on wire match the JWS signature
 let _cachedCardJson = null
