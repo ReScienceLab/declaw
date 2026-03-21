@@ -424,21 +424,64 @@ export default function register(api: any) {
 
   api.registerTool({
     name: "list_worlds",
-    description: "List known Agent worlds. Worlds are discovered by joining them via URL or agent ID.",
+    description: "List available Agent worlds from the World Registry and local cache.",
     parameters: { type: "object", properties: {}, required: [] },
     async execute(_id: string, _params: Record<string, never>) {
-      const worlds = findPeersByCapability("world:")
-      if (!worlds.length) {
-        return { content: [{ type: "text", text: "No worlds known yet. Use join_world with a world address to join one." }] }
+      // Fetch from registry
+      let registryWorlds: Array<{ agentId: string; alias?: string; endpoints?: Endpoint[]; capabilities?: string[]; lastSeen: number }> = []
+      try {
+        const registryUrl = "https://resciencelab.github.io/DAP/bootstrap.json"
+        const resp = await fetch(registryUrl, { signal: AbortSignal.timeout(10_000) })
+        if (resp.ok) {
+          const data = await resp.json() as { bootstrap_nodes?: Array<{ addr: string; httpPort?: number }> }
+          const nodes = (data.bootstrap_nodes ?? []).filter((n: any) => n.addr)
+          for (const node of nodes.slice(0, 3)) {
+            try {
+              const isIpv6 = node.addr.includes(":") && !node.addr.includes(".")
+              const url = isIpv6
+                ? `http://[${node.addr}]:${node.httpPort ?? 8099}/worlds`
+                : `http://${node.addr}:${node.httpPort ?? 8099}/worlds`
+              const wr = await fetch(url, { signal: AbortSignal.timeout(10_000) })
+              if (wr.ok) {
+                const body = await wr.json() as { worlds?: any[] }
+                for (const w of body.worlds ?? []) {
+                  if (w.agentId && !registryWorlds.some(rw => rw.agentId === w.agentId)) {
+                    registryWorlds.push(w)
+                    upsertDiscoveredPeer(w.agentId, w.publicKey ?? "", {
+                      alias: w.alias,
+                      endpoints: w.endpoints,
+                      capabilities: w.capabilities,
+                      source: "gossip",
+                    })
+                  }
+                }
+                break // got results from one registry node
+              }
+            } catch { /* try next node */ }
+          }
+        }
+      } catch { /* registry unreachable */ }
+
+      // Merge with local cache
+      const localWorlds = findPeersByCapability("world:")
+      const allWorlds = [...localWorlds]
+      for (const rw of registryWorlds) {
+        if (!allWorlds.some(w => w.agentId === rw.agentId)) {
+          allWorlds.push(rw as any)
+        }
       }
-      const lines = worlds.map((p) => {
-        const cap = p.capabilities?.find((c) => c.startsWith("world:")) ?? ""
+
+      if (!allWorlds.length) {
+        return { content: [{ type: "text", text: "No worlds found. Use join_world with a world address to connect directly." }] }
+      }
+      const lines = allWorlds.map((p) => {
+        const cap = p.capabilities?.find((c: string) => c.startsWith("world:")) ?? ""
         const worldId = cap.slice("world:".length)
-        const ago = Math.round((Date.now() - p.lastSeen) / 1000)
+        const ago = Math.round((Date.now() - (p.lastSeen ?? 0)) / 1000)
         const reachable = p.endpoints?.length ? "reachable" : "no endpoint"
         return `world:${worldId} — ${p.alias || worldId} [${reachable}] — last seen ${ago}s ago`
       })
-      return { content: [{ type: "text", text: `Found ${worlds.length} world(s):\n${lines.join("\n")}` }] }
+      return { content: [{ type: "text", text: `Found ${allWorlds.length} world(s):\n${lines.join("\n")}` }] }
     },
   })
 
