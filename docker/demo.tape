@@ -23,7 +23,7 @@ Set LoopOffset    50%
 
 # ── cd to project root (hidden) ───────────────────────────────────────────────
 Hide
-Type "cd /Users/yilin/Developer/ReScienceLab/DAP"
+Type "cd /Users/yilin/Developer/ReScienceLab/agent-world-network"
 Enter
 Sleep 300ms
 Show
