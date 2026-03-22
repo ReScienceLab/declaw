@@ -1,13 +1,13 @@
 import fs from "fs"
 import path from "path"
 import crypto from "node:crypto"
-import { signWithDomainSeparator, verifyWithDomainSeparator, DOMAIN_SEPARATORS } from "./crypto.js"
+import { signWithDomainSeparator, verifyWithDomainSeparator } from "./crypto.js"
 import type { Identity } from "./types.js"
 import type { LedgerEntry, LedgerEvent, AgentSummary, LedgerQueryOpts } from "./types.js"
+import { PROTOCOL_VERSION } from "./version.js"
 
 const ZERO_HASH = "0".repeat(64)
-const LEDGER_DOMAIN = `AgentWorld-Ledger-${DOMAIN_SEPARATORS.MESSAGE.split("-").slice(-1)[0].replace("\0", "")}`
-const LEDGER_SEPARATOR = `AgentWorld-Ledger-${DOMAIN_SEPARATORS.MESSAGE.split("-")[2]}`
+const LEDGER_SEPARATOR = `AgentWorld-Ledger-${PROTOCOL_VERSION}\0`
 
 /**
  * Append-only event ledger for World Agent activity.

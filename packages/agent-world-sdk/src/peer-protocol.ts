@@ -229,7 +229,7 @@ export function registerPeerRoutes(
         (body, statusCode) => {
           replied = true;
           if (statusCode) reply.code(statusCode);
-          reply.send(body);
+          return reply.send(body);
         }
       );
       if (!replied) return { ok: true };

@@ -37,7 +37,27 @@ function makeProof(secretKey, signable) {
   }
 }
 
-function makeApp(t) {
+function makeSignedMessage(identity, overrides = {}) {
+  const payload = {
+    from: identity.agentId,
+    publicKey: identity.pubB64,
+    event: "chat",
+    content: { text: "hello" },
+    timestamp: Date.now(),
+    ...overrides,
+  }
+
+  return {
+    ...payload,
+    signature: signWithDomainSeparator(
+      DOMAIN_SEPARATORS.MESSAGE,
+      payload,
+      identity.secretKey
+    ),
+  }
+}
+
+function makeApp(t, opts = {}) {
   const fastify = Fastify({ logger: false })
   t.after(async () => {
     await fastify.close()
@@ -47,6 +67,7 @@ function makeApp(t) {
   registerPeerRoutes(fastify, {
     identity: makeIdentity(),
     peerDb,
+    ...opts,
   })
 
   return { fastify, peerDb }
@@ -142,4 +163,56 @@ test("sdk /peer/key-rotation accepts correctly bound rotations and persists the 
   assert.equal(response.statusCode, 200)
   assert.deepEqual(response.json(), { ok: true })
   assert.equal(peerDb.get(oldKey.agentId)?.publicKey, newKey.pubB64)
+})
+
+test("sdk /peer/message returns the callback response body on the happy path", async (t) => {
+  const sender = makeIdentity()
+  const { fastify, peerDb } = makeApp(t, {
+    onMessage: async (_agentId, event, content, reply) => {
+      reply({
+        ok: true,
+        event,
+        echoedContent: content,
+      })
+    },
+  })
+
+  const response = await fastify.inject({
+    method: "POST",
+    url: "/peer/message",
+    headers: { "content-type": "application/json" },
+    payload: makeSignedMessage(sender),
+  })
+
+  assert.equal(response.statusCode, 200)
+  assert.deepEqual(response.json(), {
+    ok: true,
+    event: "chat",
+    echoedContent: { text: "hello" },
+  })
+  assert.equal(peerDb.get(sender.agentId)?.publicKey, sender.pubB64)
+})
+
+test("sdk /peer/message preserves callback error replies", async (t) => {
+  const sender = makeIdentity()
+  const { fastify } = makeApp(t, {
+    onMessage: async (_agentId, _event, _content, reply) => {
+      reply({ error: "custom failure" }, 422)
+    },
+  })
+
+  const response = await fastify.inject({
+    method: "POST",
+    url: "/peer/message",
+    headers: { "content-type": "application/json" },
+    payload: makeSignedMessage(sender, {
+      event: "fail",
+      content: { reason: "test" },
+    }),
+  })
+
+  assert.equal(response.statusCode, 422)
+  assert.deepEqual(response.json(), {
+    error: "custom failure",
+  })
 })
