@@ -296,35 +296,36 @@ export async function createWorldServer(
       recipientIds.map(async (agentId) => {
         const member = agentEndpoints.get(agentId)
         if (!member?.endpoints.length) return
-        for (const ep of [...member.endpoints].sort(
-          (a, b) => a.priority - b.priority
-        )) {
-          try {
-            const isIpv6 =
-              ep.address.includes(":") && !ep.address.includes(".");
-            const url = isIpv6
-              ? `http://[${ep.address}]:${ep.port ?? 8099}/peer/message`
-              : `http://${ep.address}:${ep.port ?? 8099}/peer/message`;
-            const body = JSON.stringify(canonicalize(payload));
-            const urlObj = new URL(url);
-            const awHeaders = signHttpRequest(
-              identity,
-              "POST",
-              urlObj.host,
-              "/peer/message",
-              body
-            );
-            await fetch(url, {
-              method: "POST",
-              headers: { "Content-Type": "application/json", ...awHeaders },
-              body,
-              signal: AbortSignal.timeout(8_000),
-            });
-            return;
-          } catch {
-            /* try next endpoint */
-          }
-        }
+        await Promise.allSettled(
+          [...member.endpoints]
+            .sort((a, b) => a.priority - b.priority)
+            .map(async (ep) => {
+              try {
+                const isIpv6 =
+                  ep.address.includes(":") && !ep.address.includes(".");
+                const url = isIpv6
+                  ? `http://[${ep.address}]:${ep.port ?? 8099}/peer/message`
+                  : `http://${ep.address}:${ep.port ?? 8099}/peer/message`;
+                const body = JSON.stringify(canonicalize(payload));
+                const urlObj = new URL(url);
+                const awHeaders = signHttpRequest(
+                  identity,
+                  "POST",
+                  urlObj.host,
+                  "/peer/message",
+                  body
+                );
+                await fetch(url, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json", ...awHeaders },
+                  body,
+                  signal: AbortSignal.timeout(8_000),
+                });
+              } catch {
+                /* try other endpoints */
+              }
+            })
+        )
       })
     );
   }

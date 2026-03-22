@@ -56,8 +56,8 @@
         "Typecheck passes"
       ],
       "priority": 4,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Kept broadcast delivery on the existing signed HTTP `/peer/message` path in packages/agent-world-sdk/src/world-server.ts, but changed the per-member loop to attempt every owned endpoint instead of returning after the first successful send. Added test/world-state-broadcast.test.mjs to verify an active member with two registered endpoints receives a world.state send attempt on both."
     },
     {
       "id": "T-005",

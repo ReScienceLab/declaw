@@ -9,6 +9,7 @@
 - In `gateway/server.mjs`, `/health` must keep `ok: true` for compatibility while deriving `status` from registry contents: `ready` when `worlds > 0`, `warming` when `agents > 0` but no worlds, and `empty` when the registry is empty.
 - In `packages/agent-world-sdk/src/world-server.ts`, active world membership is tracked by `agentLastSeen` plus `agentEndpoints`; `getMembers()` already treats membership as their intersection, while `peerDb` is broader discovery state and should not be used as the source of truth for joined-world recipients.
 - In `packages/agent-world-sdk/src/world-server.ts`, broadcast delivery must use the selected member's own `agentEndpoints` entry; do not fall back to `peerDb` for per-recipient endpoint lists after membership filtering.
+- In `packages/agent-world-sdk/src/world-server.ts`, world-state broadcasts should attempt every endpoint registered on an active member, not stop after the first successful `/peer/message` delivery.
 - Full repo validation currently needs both TypeScript builds before `node --test test/*.test.mjs`: run `npm run build` and `npm --prefix packages/agent-world-sdk run build` so both `dist/` trees exist for the tests.
 
 (Add reusable patterns discovered during implementation here)
@@ -88,4 +89,13 @@
   - In `world-server.ts`, membership filtering alone is not enough for privacy; endpoint ownership must stay tied to the selected agent ID all the way through delivery.
   - `agentEndpoints` already carries the sorted delivery candidates needed for broadcasts, so `peerDb` should not re-enter the world-state path after recipient IDs are chosen.
   - Root `AGENTS.md` is the right place to preserve reusable world-server delivery rules that future stories in this branch need to follow.
+---
+## 2026-03-22 13:51:29 UTC - T-004
+- Kept `broadcastWorldState()` on the existing signed HTTP `/peer/message` delivery path, but changed the per-member loop to attempt every registered endpoint owned by the active member instead of returning after the first success.
+- Added `test/world-state-broadcast.test.mjs` to verify one joined member with two endpoints receives a `world.state` send attempt on both owned endpoints.
+- Files changed: `packages/agent-world-sdk/src/world-server.ts`, `test/world-state-broadcast.test.mjs`, `AGENTS.md`, `.hal/auto-prd.json`, `.hal/progress.txt`
+- **Learnings for future iterations:**
+  - The current world-state transport path is the inline signed HTTP `fetch()` to `/peer/message`; preserve that path when tightening recipient rules so delivery semantics stay consistent.
+  - Multi-endpoint world members expect a broadcast attempt per owned endpoint, so the loop must not short-circuit after the first successful send.
+  - A `fetch` interceptor in `node:test` is an effective way to assert outbound world-state sends without standing up full peer servers when the test only needs to observe attempted deliveries.
 ---
