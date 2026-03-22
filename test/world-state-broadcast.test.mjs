@@ -21,6 +21,45 @@ function makeKeypair() {
   return { publicKey, secretKey: kp.secretKey }
 }
 
+async function announcePeer(agentId, pubKey, secretKey, endpoints) {
+  const payload = {
+    from: agentId,
+    publicKey: pubKey,
+    alias: "Known Peer",
+    endpoints,
+    capabilities: [],
+    timestamp: Date.now(),
+  }
+  const signature = signWithDomainSeparator(
+    DOMAIN_SEPARATORS.ANNOUNCE,
+    payload,
+    secretKey
+  )
+  const body = JSON.stringify({ ...payload, signature })
+  const resp = await fetch(`http://[::1]:${PORT}/peer/announce`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body,
+  })
+  return resp.json()
+}
+
+async function createKnownNonMemberFixture(port = 29003) {
+  const kp = makeKeypair()
+  const agentId = agentIdFromPublicKey(kp.publicKey)
+  const full = nacl.sign.keyPair.fromSeed(kp.secretKey.slice(0, 32))
+  const endpoints = [
+    { transport: "tcp", address: "127.0.0.1", port, priority: 1 },
+  ]
+  const announceResp = await announcePeer(
+    agentId,
+    kp.publicKey,
+    full.secretKey,
+    endpoints
+  )
+  return { agentId, endpoints, announceResp }
+}
+
 async function joinAgent(agentId, pubKey, secretKey, endpoints) {
   const content = JSON.stringify({ alias: "Watcher", endpoints })
   const payload = {
@@ -95,6 +134,20 @@ describe("World state broadcast delivery", () => {
     globalThis.fetch = originalFetch
     await server.stop()
     fs.rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  it("creates a known non-member broadcast fixture via peer announce", async () => {
+    const { agentId, announceResp } = await createKnownNonMemberFixture()
+
+    assert.equal(Array.isArray(announceResp.peers), true)
+    assert.equal(
+      announceResp.peers.some(
+        (peer) =>
+          peer.agentId === agentId &&
+          peer.endpoints.some((ep) => ep.port === 29003)
+      ),
+      true
+    )
   })
 
   it("broadcasts world.state to each registered endpoint for an active member", async () => {

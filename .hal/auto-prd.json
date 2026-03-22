@@ -70,8 +70,8 @@
         "Typecheck passes"
       ],
       "priority": 5,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Added a reusable non-member fixture helper in test/world-state-broadcast.test.mjs that seeds discovery through a signed /peer/announce without calling world.join. The fixture asserts the announced peer lands in the peer list with a reachable endpoint, matching the shape that the old peerDb-based broadcast selection would have used."
     },
     {
       "id": "T-006",

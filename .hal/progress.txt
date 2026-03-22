@@ -11,6 +11,7 @@
 - In `packages/agent-world-sdk/src/world-server.ts`, broadcast delivery must use the selected member's own `agentEndpoints` entry; do not fall back to `peerDb` for per-recipient endpoint lists after membership filtering.
 - In `packages/agent-world-sdk/src/world-server.ts`, world-state broadcasts should attempt every endpoint registered on an active member, not stop after the first successful `/peer/message` delivery.
 - Full repo validation currently needs both TypeScript builds before `node --test test/*.test.mjs`: run `npm run build` and `npm --prefix packages/agent-world-sdk run build` so both `dist/` trees exist for the tests.
+- In `test/world-state-broadcast.test.mjs`, model a discovered-but-not-joined peer by sending a signed `/peer/announce` without `world.join`; that seeds the old `peerDb` shape while leaving `agentLastSeen` and `agentEndpoints` empty for exclusion coverage.
 
 (Add reusable patterns discovered during implementation here)
 
@@ -98,4 +99,13 @@
   - The current world-state transport path is the inline signed HTTP `fetch()` to `/peer/message`; preserve that path when tightening recipient rules so delivery semantics stay consistent.
   - Multi-endpoint world members expect a broadcast attempt per owned endpoint, so the loop must not short-circuit after the first successful send.
   - A `fetch` interceptor in `node:test` is an effective way to assert outbound world-state sends without standing up full peer servers when the test only needs to observe attempted deliveries.
+---
+## 2026-03-22 13:55:51 UTC - T-005
+- Added a reusable `createKnownNonMemberFixture()` helper in `test/world-state-broadcast.test.mjs` that seeds discovery through a signed `/peer/announce` while intentionally skipping `world.join`.
+- Verified the fixture exposes a reachable endpoint in the announced `peers` payload, matching the peer shape the pre-fix `peerDb`-based broadcast path would have targeted.
+- Files changed: `test/world-state-broadcast.test.mjs`, `AGENTS.md`, `.hal/auto-prd.json`, `.hal/progress.txt`
+- **Learnings for future iterations:**
+  - For broadcast privacy regressions, a signed `/peer/announce` is enough to create a known peer in discovery state without making that agent an active world member.
+  - Keeping the non-member fixture in a helper avoids duplicating announce-signing setup across the upcoming exclusion and inclusion tests in this file.
+  - Full validation for these stories should continue using both package builds before `node --test test/*.test.mjs`, since this test imports SDK `dist/` output.
 ---
