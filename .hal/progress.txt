@@ -195,3 +195,12 @@
   - This story did not require an `AGENTS.md` update because the reusable route-location and error-contract guidance was already captured there.
   - The targeted validation path for this area remains `npm run build`, `npm --prefix packages/agent-world-sdk run build`, then `node --test test/key-rotation.test.mjs`.
 ---
+## 2026-03-22 14:25:45 UTC - T-006
+- Added `test/key-rotation-sdk.test.mjs`, a direct SDK regression that boots Fastify with `registerPeerRoutes()` from `packages/agent-world-sdk/dist` and submits a malformed `/peer/key-rotation` request where `newAgentId` does not match the ID derived from `newPublicKey`.
+- Verified the story with `npm run build`, `npm --prefix packages/agent-world-sdk run build`, and `node --test test/*.test.mjs`; the full suite passed with 160 tests and 0 failures.
+- Files changed: `test/key-rotation-sdk.test.mjs`, `.hal/auto-prd.json`, `.hal/progress.txt`
+- **Learnings for future iterations:**
+  - There is no standalone SDK test harness in `packages/agent-world-sdk`, so the cleanest package-level regression path is a root `node:test` file that imports the built SDK `dist` entrypoints directly.
+  - `fastify.inject()` is sufficient for SDK route coverage here; it exercises `registerPeerRoutes()` without starting a network listener and keeps the regression focused on the authoritative handler.
+  - This story did not require an `AGENTS.md` update because the reusable key-rotation validation guidance was already recorded in the root guide and Codebase Patterns section.
+---
