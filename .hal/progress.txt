@@ -222,3 +222,12 @@
   - This validation story did not require an `AGENTS.md` update because it confirmed an existing build pattern rather than introducing a new reusable module convention.
   - The remaining unchecked stories still require broader repo-level verification and final scope review after this package build checkpoint.
 ---
+## 2026-03-22 14:29:52 UTC - T-009
+- Ran the repo validation sequence for the key-rotation change set: `npm run build`, `npm --prefix packages/agent-world-sdk run build`, and `node --test test/*.test.mjs`.
+- Confirmed the full suite is green after the security fix work: both builds succeeded and the Node test run finished with 161 passing tests and 0 failures.
+- Files changed: `.hal/auto-prd.json`, `.hal/progress.txt`
+- **Learnings for future iterations:**
+  - The repo-level acceptance path for this branch remains `npm run build && npm --prefix packages/agent-world-sdk run build && node --test test/*.test.mjs`; both `dist/` trees still need to exist before the root tests run.
+  - This story did not require an `AGENTS.md` update because it validated an already-documented workflow instead of adding a new reusable codebase convention.
+  - The only remaining unchecked PRD story is the final minimal-scope review, so the next iteration can focus on change-scope verification rather than additional implementation.
+---
