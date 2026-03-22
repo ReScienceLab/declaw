@@ -1,0 +1,1 @@
+../../.hal/commands/index-standards.md

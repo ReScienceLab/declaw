@@ -26,3 +26,8 @@ __pycache__/
 
 # Remotion build output
 animation/out/
+
+# hal runtime config (standards and commands are committed)
+.hal/*
+!.hal/standards/
+!.hal/commands/
