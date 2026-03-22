@@ -24,8 +24,14 @@ function makeKeypair() {
 describe("World-scoped member discovery", () => {
   let tmpDir
   let server
+  let signHttpRequest
+  let signWithDomainSeparator
+  let DOMAIN_SEPARATORS
+  let agentIdFromPublicKey
 
   before(async () => {
+    ;({ signHttpRequest, DOMAIN_SEPARATORS, signWithDomainSeparator, agentIdFromPublicKey } =
+      await import("../packages/agent-world-sdk/dist/crypto.js"))
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "world-members-"))
     server = await createWorldServer(
       {
@@ -53,10 +59,61 @@ describe("World-scoped member discovery", () => {
     fs.rmSync(tmpDir, { recursive: true })
   })
 
-  it("world.join response includes members list", async () => {
-    const { signHttpRequest, DOMAIN_SEPARATORS, signWithDomainSeparator, agentIdFromPublicKey } =
-      await import("../packages/agent-world-sdk/dist/crypto.js")
+  async function announcePeer(agentId, pubKey, secretKey, endpoints) {
+    const payload = {
+      from: agentId,
+      publicKey: pubKey,
+      alias: "Known Peer",
+      endpoints,
+      capabilities: [],
+      timestamp: Date.now(),
+    }
+    const signature = signWithDomainSeparator(
+      DOMAIN_SEPARATORS.ANNOUNCE,
+      payload,
+      secretKey
+    )
+    const body = JSON.stringify({ ...payload, signature })
+    const resp = await fetch(`http://[::1]:${PORT}/peer/announce`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+    })
+    return resp.json()
+  }
 
+  async function joinAgent(agentId, pubKey, secretKey, alias, endpoints) {
+    const content = JSON.stringify({ alias, endpoints })
+    const payload = {
+      from: agentId,
+      publicKey: pubKey,
+      event: "world.join",
+      content,
+      timestamp: Date.now(),
+    }
+    const sig = signWithDomainSeparator(DOMAIN_SEPARATORS.MESSAGE, payload, secretKey)
+    const msg = { ...payload, signature: sig }
+    const body = JSON.stringify(msg)
+
+    const host = `[::1]:${PORT}`
+    const urlPath = "/peer/message"
+    const sdkIdentity = {
+      agentId,
+      pubB64: pubKey,
+      secretKey,
+      keypair: { publicKey: Buffer.from(pubKey, "base64"), secretKey },
+    }
+    const awHeaders = signHttpRequest(sdkIdentity, "POST", host, urlPath, body)
+
+    const resp = await fetch(`http://${host}${urlPath}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...awHeaders },
+      body,
+    })
+    return resp.json()
+  }
+
+  it("world.join response includes members list", async () => {
     const kp1 = makeKeypair()
     const agentId1 = agentIdFromPublicKey(kp1.publicKey)
     const identity1 = {
@@ -69,37 +126,6 @@ describe("World-scoped member discovery", () => {
     const kp2 = makeKeypair()
     const agentId2 = agentIdFromPublicKey(kp2.publicKey)
     const full2 = nacl.sign.keyPair.fromSeed(kp2.secretKey.slice(0, 32))
-
-    async function joinAgent(agentId, pubKey, secretKey, alias, endpoints) {
-      const content = JSON.stringify({ alias, endpoints })
-      const payload = {
-        from: agentId,
-        publicKey: pubKey,
-        event: "world.join",
-        content,
-        timestamp: Date.now(),
-      }
-      const sig = signWithDomainSeparator(DOMAIN_SEPARATORS.MESSAGE, payload, secretKey)
-      const msg = { ...payload, signature: sig }
-      const body = JSON.stringify(msg)
-
-      const host = `[::1]:${PORT}`
-      const urlPath = "/peer/message"
-      const sdkIdentity = {
-        agentId,
-        pubB64: pubKey,
-        secretKey,
-        keypair: { publicKey: Buffer.from(pubKey, "base64"), secretKey },
-      }
-      const awHeaders = signHttpRequest(sdkIdentity, "POST", host, urlPath, body)
-
-      const resp = await fetch(`http://${host}${urlPath}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...awHeaders },
-        body,
-      })
-      return resp.json()
-    }
 
     // Agent 1 joins — should get 0 members (nobody else yet)
     const resp1 = await joinAgent(
@@ -123,6 +149,42 @@ describe("World-scoped member discovery", () => {
     assert.equal(resp2.members[0].alias, "Agent1")
     assert.ok(resp2.members[0].endpoints.length > 0, "Member should have endpoints")
     assert.equal(resp2.members[0].endpoints[0].address, "10.0.0.1")
+  })
+
+  it("world.join excludes discovered peers that never joined the world", async () => {
+    const announced = makeKeypair()
+    const announcedAgentId = agentIdFromPublicKey(announced.publicKey)
+    const announcedFull = nacl.sign.keyPair.fromSeed(announced.secretKey.slice(0, 32))
+
+    const announceResp = await announcePeer(
+      announcedAgentId,
+      announced.publicKey,
+      announcedFull.secretKey,
+      [{ transport: "tcp", address: "10.0.0.99", port: 8099, priority: 1 }]
+    )
+
+    assert.equal(
+      announceResp.peers.some((peer) => peer.agentId === announcedAgentId),
+      true
+    )
+
+    const joining = makeKeypair()
+    const joiningAgentId = agentIdFromPublicKey(joining.publicKey)
+    const joiningFull = nacl.sign.keyPair.fromSeed(joining.secretKey.slice(0, 32))
+
+    const joinResp = await joinAgent(
+      joiningAgentId,
+      joining.publicKey,
+      joiningFull.secretKey,
+      "Joiner",
+      [{ transport: "tcp", address: "10.0.0.10", port: 8099, priority: 1 }]
+    )
+
+    assert.ok(joinResp.ok, "Joined agent should join successfully")
+    assert.equal(
+      joinResp.members.some((member) => member.agentId === announcedAgentId),
+      false
+    )
   })
 
   it("/world/members requires authentication", async () => {

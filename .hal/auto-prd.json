@@ -112,8 +112,8 @@
         "Typecheck passes"
       ],
       "priority": 8,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Reviewed the existing world-state coverage and tightened test/world-members.test.mjs so a discovered peer announced through /peer/announce but never joined via world.join is explicitly excluded from subsequent join response membership data. Existing assertions stayed intact; the update adds a membership-only expectation without removing prior coverage."
     },
     {
       "id": "T-009",

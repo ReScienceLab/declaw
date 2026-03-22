@@ -13,6 +13,7 @@
 - Full repo validation currently needs both TypeScript builds before `node --test test/*.test.mjs`: run `npm run build` and `npm --prefix packages/agent-world-sdk run build` so both `dist/` trees exist for the tests.
 - In `test/world-state-broadcast.test.mjs`, model a discovered-but-not-joined peer by sending a signed `/peer/announce` without `world.join`; that seeds the old `peerDb` shape while leaving `agentLastSeen` and `agentEndpoints` empty for exclusion coverage.
 - In `test/world-state-broadcast.test.mjs`, prove endpoint ownership by seeding both a discovered non-member and a joined member, intercepting outbound `/peer/message` calls, and asserting the exact hit-port set matches only the joined member's endpoints.
+- In `test/world-members.test.mjs`, the suite reuses one world server across subtests, so membership assertions should verify inclusion or exclusion of specific agent IDs instead of assuming the member list starts empty.
 
 (Add reusable patterns discovered during implementation here)
 
@@ -127,4 +128,13 @@
   - The positive broadcast regression should share the non-member fixture with the joined-member case so the test proves both inclusion and endpoint ownership in one setup.
   - For these outbound delivery tests, asserting the sorted set of intercepted destination ports is more robust than relying on hit order across concurrent fetches.
   - Full validation for this branch still requires both builds before `node --test test/*.test.mjs`.
+---
+## 2026-03-22 14:02:53 UTC - T-008
+- Reviewed the remaining membership-related tests and tightened `test/world-members.test.mjs` with a regression that announces a reachable peer without `world.join`, then verifies a later join response does not include that discovered non-member.
+- Refactored the test file to share announce/join helpers at suite scope so the new expectation reuses the same signing path as the existing member-list assertions.
+- Files changed: `test/world-members.test.mjs`, `.hal/auto-prd.json`, `.hal/progress.txt`
+- **Learnings for future iterations:**
+  - `test/world-members.test.mjs` keeps one world server alive for the whole suite, so cross-test state accumulates unless assertions target specific agent IDs.
+  - A signed `/peer/announce` is sufficient to seed discovery state in the world-members suite, which makes it a good place to verify that membership responses ignore non-joined peers.
+  - Full validation remains `npm run build && npm --prefix packages/agent-world-sdk run build && node --test test/*.test.mjs`.
 ---
