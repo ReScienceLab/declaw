@@ -287,7 +287,7 @@ export async function createWorldServer(
       timestamp: Date.now(),
     };
     payload["signature"] = signWithDomainSeparator(
-      DOMAIN_SEPARATORS.WORLD_STATE,
+      DOMAIN_SEPARATORS.MESSAGE,
       payload,
       identity.secretKey
     );

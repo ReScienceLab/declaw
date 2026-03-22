@@ -2,6 +2,7 @@
 
 ## Codebase Patterns
 - For the `compound/fix-sdk-protocol-consistency-bugs` branch, keep non-bookkeeping changes scoped to `packages/agent-world-sdk/src/world-server.ts`, `packages/agent-world-sdk/src/world-ledger.ts`, `packages/agent-world-sdk/src/peer-protocol.ts`, and only the minimal regression files needed to verify those three fixes.
+- In `packages/agent-world-sdk/src/world-server.ts`, `world.state` broadcasts still go through `/peer/message`, so their signatures must use `DOMAIN_SEPARATORS.MESSAGE` rather than `DOMAIN_SEPARATORS.WORLD_STATE`.
 - For direct SDK handler regressions that the integrated HTTP suites do not hit, prefer a root `node:test` file that imports built `packages/agent-world-sdk/dist` entrypoints and exercises `registerPeerRoutes()` with `fastify.inject()` instead of starting a network listener.
 - For deterministic identity-helper regressions in this branch, use `nacl.sign.keyPair.fromSeed(Buffer.alloc(32, 1))`; its public key is `iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w=` and it maps to stable literals for both `deriveDidKey()` and `toPublicKeyMultibase()`.
 - For Base58 zero-boundary fixes in this repo, both codec halves need explicit all-zero handling: the encoder must not append the synthetic zero digit after leading `1`s, and the decoder must not retain the synthetic accumulator byte for all-leading-`1` inputs.
@@ -352,4 +353,14 @@
   - The follow-up world-state signing regression should stay narrow: update or replace the existing domain-separation expectation without duplicating the recipient restriction assertions already covered in `test/world-state-broadcast.test.mjs`.
   - The ledger separator fix needs its own exact-constant assertion against the built SDK artifact because current tests do not read `LEDGER_SEPARATOR` directly anywhere.
   - The `/peer/message` reply-path regression is best added as a direct SDK route test with `fastify.inject()` because the existing integrated HTTP suites do not expose the callback branch inside `registerPeerRoutes()`.
+---
+## 2026-03-22 15:08:53 UTC - T-003
+- Updated `packages/agent-world-sdk/src/world-server.ts` so `broadcastWorldState()` signs outbound `world.state` payloads with `DOMAIN_SEPARATORS.MESSAGE` while leaving recipient selection and endpoint delivery unchanged.
+- Added the reusable signing-domain note to `AGENTS.md` and the consolidated Codebase Patterns section.
+- Ran `npm --prefix packages/agent-world-sdk run build`.
+- Files changed: `packages/agent-world-sdk/src/world-server.ts`, `AGENTS.md`, `.hal/auto-prd.json`, `.hal/progress.txt`
+- **Learnings for future iterations:**
+  - `world.state` is a message-type payload transported through `/peer/message`, so its signature domain has to match the standard message verification path rather than the separate `WORLD_STATE` constant.
+  - This story is intentionally code-local to `broadcastWorldState()`; the recipient filtering and per-endpoint delivery logic remain covered by the earlier membership/privacy fixes.
+  - The next signing-regression story should update the stale expectation in `test/domain-separation.test.mjs` instead of adding broader world-state transport coverage.
 ---

@@ -42,8 +42,8 @@
         "Typecheck passes"
       ],
       "priority": 3,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Updated `packages/agent-world-sdk/src/world-server.ts` so `broadcastWorldState()` signs outbound `world.state` payloads with `DOMAIN_SEPARATORS.MESSAGE`, preserving the existing recipient and endpoint-delivery flow. Verified with `npm --prefix packages/agent-world-sdk run build`."
     },
     {
       "id": "T-004",
