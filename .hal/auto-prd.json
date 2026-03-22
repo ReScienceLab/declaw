@@ -42,8 +42,8 @@
         "Typecheck passes"
       ],
       "priority": 3,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Updated packages/agent-world-sdk/src/world-server.ts so broadcastWorldState() resolves endpoints from agentEndpoints for each eligible recipient ID. Members without registered endpoints are skipped, and the loop no longer reuses peerDb endpoint lists that may belong to unrelated discovered peers."
     },
     {
       "id": "T-004",

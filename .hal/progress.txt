@@ -8,6 +8,7 @@
 - In `gateway/server.mjs`, lifecycle cleanup should retain server and timer handles in module scope so signal handlers can flush the registry once, clear intervals, and close listeners idempotently.
 - In `gateway/server.mjs`, `/health` must keep `ok: true` for compatibility while deriving `status` from registry contents: `ready` when `worlds > 0`, `warming` when `agents > 0` but no worlds, and `empty` when the registry is empty.
 - In `packages/agent-world-sdk/src/world-server.ts`, active world membership is tracked by `agentLastSeen` plus `agentEndpoints`; `getMembers()` already treats membership as their intersection, while `peerDb` is broader discovery state and should not be used as the source of truth for joined-world recipients.
+- In `packages/agent-world-sdk/src/world-server.ts`, broadcast delivery must use the selected member's own `agentEndpoints` entry; do not fall back to `peerDb` for per-recipient endpoint lists after membership filtering.
 - Full repo validation currently needs both TypeScript builds before `node --test test/*.test.mjs`: run `npm run build` and `npm --prefix packages/agent-world-sdk run build` so both `dist/` trees exist for the tests.
 
 (Add reusable patterns discovered during implementation here)
@@ -79,4 +80,12 @@
   - In `world-server.ts`, recipient selection and transport lookup are separate concerns: select member IDs from `agentLastSeen` plus `agentEndpoints`, then let later logic decide how to resolve per-recipient delivery metadata.
   - This story only narrows who is eligible for broadcast; endpoint ownership and multi-endpoint delivery assertions still belong to the next stories.
   - A focused SDK-only `npm --prefix packages/agent-world-sdk run build` is enough to typecheck changes isolated to the world server before broader regression coverage is added.
+---
+## 2026-03-22 13:46:57 UTC - T-003
+- Updated `broadcastWorldState()` in `packages/agent-world-sdk/src/world-server.ts` so each eligible member's send loop resolves endpoints from that member's `agentEndpoints` entry instead of `peerDb`.
+- Files changed: `packages/agent-world-sdk/src/world-server.ts`, `AGENTS.md`, `.hal/auto-prd.json`, `.hal/progress.txt`
+- **Learnings for future iterations:**
+  - In `world-server.ts`, membership filtering alone is not enough for privacy; endpoint ownership must stay tied to the selected agent ID all the way through delivery.
+  - `agentEndpoints` already carries the sorted delivery candidates needed for broadcasts, so `peerDb` should not re-enter the world-state path after recipient IDs are chosen.
+  - Root `AGENTS.md` is the right place to preserve reusable world-server delivery rules that future stories in this branch need to follow.
 ---

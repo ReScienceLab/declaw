@@ -88,6 +88,7 @@ All runtime config is in `openclaw.json` under `plugins.entries.awn.config`:
 ### World Server Membership
 - In `packages/agent-world-sdk/src/world-server.ts`, joined-world membership is tracked by `agentLastSeen` and `agentEndpoints`; `getMembers()` already treats active members as the intersection of those maps.
 - `peerDb` is broader discovery state and may include known peers outside the active world membership, so broadcast recipient selection should not use `peerDb` as the source of truth for world-state delivery.
+- In `packages/agent-world-sdk/src/world-server.ts`, once a broadcast recipient is selected, endpoint delivery must also come from that member's `agentEndpoints` entry rather than `peerDb`, so world-state sends cannot reuse unrelated discovered endpoints.
 
 ## Git Workflow
 

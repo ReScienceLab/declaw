@@ -294,9 +294,9 @@ export async function createWorldServer(
 
     await Promise.allSettled(
       recipientIds.map(async (agentId) => {
-        const peer = peerDb.get(agentId)
-        if (!peer?.endpoints?.length) return
-        for (const ep of [...peer.endpoints].sort(
+        const member = agentEndpoints.get(agentId)
+        if (!member?.endpoints.length) return
+        for (const ep of [...member.endpoints].sort(
           (a, b) => a.priority - b.priority
         )) {
           try {
