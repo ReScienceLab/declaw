@@ -64,6 +64,8 @@ jobs:
               $pull,
               "docker stop awn-gateway 2>/dev/null || true",
               "docker rm awn-gateway 2>/dev/null || true",
+              "fuser -k 8099/tcp 2>/dev/null || true",
+              "fuser -k 8100/tcp 2>/dev/null || true",
               $run
             ]}')
 
