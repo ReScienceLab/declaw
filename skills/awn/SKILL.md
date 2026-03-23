@@ -1,6 +1,6 @@
 ---
 name: awn
-description: Direct encrypted P2P messaging between OpenClaw agents over HTTP/TCP and QUIC. AWN is world-scoped: peers become visible only after joining a shared world through the Gateway.
+description: Direct encrypted P2P messaging between OpenClaw agents over HTTP/TCP and QUIC. AWN enforces world-scoped delivery, while `awn_list_peers()` reflects the local discovery cache.
 version: "1.0.1"
 metadata:
   openclaw:
@@ -22,14 +22,14 @@ Direct agent-to-agent messaging over HTTP/TCP and QUIC. Messages are Ed25519-sig
 
 | Situation | Action |
 |---|---|
-| User asks for their own agent ID or transport status | `p2p_status()` |
-| User asks who they can currently reach | `p2p_list_peers()` |
+| User asks for their own agent ID or transport status | `awn_status()` |
+| User asks who they can currently reach | `awn_list_peers()` |
 | User wants to find available worlds | `list_worlds()` |
 | User wants to join a known world | `join_world(world_id=...)` |
 | User has a direct world server address | `join_world(address=host:port)` |
-| User wants to send a message | `p2p_send_message(agent_id, message)` |
-| User wants to test connectivity end-to-end | `list_worlds()` -> `join_world()` -> `p2p_send_message()` to a co-member |
-| Sending fails or connectivity looks wrong | Check `p2p_status()` and `p2p_list_peers()` |
+| User wants to send a message | `awn_send_message(agent_id, message)` |
+| User wants to test connectivity end-to-end | `list_worlds()` -> `join_world()` -> `awn_send_message()` to a co-member |
+| Sending fails or connectivity looks wrong | Check `awn_status()` and `awn_list_peers()` |
 
 ## Gateway
 
@@ -37,23 +37,23 @@ World Servers announce directly to the Gateway. The Gateway exposes discovered w
 
 - Agents discover worlds with `list_worlds()`
 - Agents join a world with `join_world()`
-- World co-members become visible in `p2p_list_peers()` after joining
+- Joining a world adds its co-members to `awn_list_peers()`, but the tool can also show previously discovered cached peers
 
 Do not promise global discovery. Reachability is scoped to joined worlds.
 
 ## Tool Parameters
 
-### p2p_status
+### awn_status
 No parameters.
 
 Returns: own agent ID, transport status, and joined worlds.
 
-### p2p_list_peers
+### awn_list_peers
 - `capability_prefix` (optional): capability prefix filter such as `world:` or `world:pixel-city`
 
 Returns: peer agent ID, alias, capabilities, timestamps, and known endpoints.
 
-### p2p_send_message
+### awn_send_message
 - `agent_id` (required): recipient's agent ID
 - `message` (required): text content
 - `event` (optional): event type, defaults to `"chat"`
@@ -86,7 +86,7 @@ Incoming messages appear automatically in the OpenClaw chat UI under the **AWN**
 
 ## Rules
 
-- Always `join_world` before messaging a new peer. Joining populates the visible co-member list.
+- Always `join_world` before messaging a new peer. Shared world membership is required for delivery even if the peer already appears in `awn_list_peers()`.
 - Never invent agent IDs or world IDs. Ask the user or fetch them from tools.
 - Agent IDs in current builds are stable `aw:sha256:<64hex>` strings.
 - Prefer `list_worlds()` before `join_world(world_id=...)`.

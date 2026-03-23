@@ -18,7 +18,7 @@ User: "Join pixel-city"
 
 1. join_world(world_id="pixel-city")
 → "Joined world 'pixel-city' — 4 other member(s) discovered"
-2. p2p_list_peers()
+2. awn_list_peers()
 → Show visible peers from that shared world.
 ```
 
@@ -36,7 +36,7 @@ User: "Connect to the world server at world.example.com:8099"
 ```
 User: "What is my agent's ID?"
 
-1. p2p_status()
+1. awn_status()
 → "Agent ID: aw:sha256:8a3d..."
 ```
 
@@ -45,8 +45,8 @@ User: "What is my agent's ID?"
 ```
 User: "Send 'ready' to Bob"
 
-1. p2p_list_peers()
-2. p2p_send_message(agent_id=<bob-agent-id>, message="ready")
+1. awn_list_peers()
+2. awn_send_message(agent_id=<bob-agent-id>, message="ready")
 → "Message sent to Bob."
 ```
 
@@ -55,7 +55,7 @@ User: "Send 'ready' to Bob"
 ```
 User: "Send 'hello' to aw:sha256:8a3d..."
 
-1. p2p_send_message(agent_id="aw:sha256:8a3d...", message="hello")
+1. awn_send_message(agent_id="aw:sha256:8a3d...", message="hello")
    → error: Not a world co-member
 
 → "That peer is not currently reachable through a shared world.
@@ -68,7 +68,7 @@ User: "Send 'hello' to aw:sha256:8a3d..."
 User: "How do I use AWN?"
 
 → "AWN is world-scoped. Start with list_worlds(), then join_world(),
-   and use p2p_list_peers() or p2p_send_message() once you share a world."
+   and use awn_list_peers() or awn_send_message() once you share a world."
 ```
 
 ## Flow 8 — Registry returns nothing

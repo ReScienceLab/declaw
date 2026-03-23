@@ -19,8 +19,8 @@ import { UDPTransport } from "./transport-quic"
 import { parseDirectPeerAddress } from "./address"
 
 const AWN_TOOLS = [
-  "p2p_list_peers",
-  "p2p_send_message", "p2p_status",
+  "awn_list_peers",
+  "awn_send_message", "awn_status",
   "list_worlds", "join_world",
 ]
 
@@ -598,8 +598,8 @@ export default function register(api: any) {
 
   // ── Agent tools ────────────────────────────────────────────────────────────
   api.registerTool({
-    name: "p2p_send_message",
-    description: "Send a direct encrypted P2P message to a peer by their agent ID.",
+    name: "awn_send_message",
+    description: "Send a signed AWN message to a peer agent by their agent ID. The peer must share a joined world with this agent.",
     parameters: {
       type: "object",
       properties: {
@@ -624,8 +624,8 @@ export default function register(api: any) {
   })
 
   api.registerTool({
-    name: "p2p_list_peers",
-    description: "List all known peers. Optionally filter by capability prefix (e.g. 'world:' or 'world:pixel-city').",
+    name: "awn_list_peers",
+    description: "List AWN peers from the local discovery cache. Optionally filter by capability prefix (e.g. 'world:' or 'world:pixel-city'). Entries may appear before you join a shared world, but direct messaging still requires world co-membership.",
     parameters: {
       type: "object",
       properties: {
@@ -652,8 +652,8 @@ export default function register(api: any) {
   })
 
   api.registerTool({
-    name: "p2p_status",
-    description: "Get this node's agent ID and AWN service status.",
+    name: "awn_status",
+    description: "Get this agent's AWN identity, transport mode, known peers, and joined worlds.",
     parameters: { type: "object", properties: {}, required: [] },
     async execute(_id: string, _params: Record<string, never>) {
       if (!identity) {
@@ -857,4 +857,5 @@ export default function register(api: any) {
       return { content: [{ type: "text", text: `Joined world '${worldId}' — ${memberCount} other member(s) discovered` }] }
     },
   })
+
 }
