@@ -48,29 +48,37 @@ jobs:
           fi
           echo "EC2 public IP: $EC2_IP  Gateway: $GATEWAY_HOST"
 
-          EXISTING=$(curl -sf \
+          PAYLOAD="{\"type\":\"A\",\"name\":\"$GATEWAY_HOST\",\"content\":\"$EC2_IP\",\"ttl\":1,\"proxied\":true}"
+
+          EXISTING=$(curl -s \
             "https://api.cloudflare.com/client/v4/zones/$CF_ZONE_ID/dns_records?type=A&name=$GATEWAY_HOST" \
             -H "Authorization: Bearer $CF_API_TOKEN" \
             -H "Content-Type: application/json")
 
-          RECORD_ID=$(echo "$EXISTING" | jq -r '.result[0].id // empty')
-
-          PAYLOAD="{\"type\":\"A\",\"name\":\"$GATEWAY_HOST\",\"content\":\"$EC2_IP\",\"ttl\":1,\"proxied\":true}"
-
-          if [ -n "$RECORD_ID" ]; then
-            curl -sf -X PUT \
-              "https://api.cloudflare.com/client/v4/zones/$CF_ZONE_ID/dns_records/$RECORD_ID" \
-              -H "Authorization: Bearer $CF_API_TOKEN" \
-              -H "Content-Type: application/json" \
-              -d "$PAYLOAD"
-            echo "Updated DNS A record $RECORD_ID → $EC2_IP"
+          if ! echo "$EXISTING" | jq -e '.success == true' > /dev/null 2>&1; then
+            echo "::warning::Cloudflare API error: $(echo "$EXISTING" | jq -rc '.errors // .')"
+            echo "Skipping DNS update — record may already be correct."
           else
-            curl -sf -X POST \
-              "https://api.cloudflare.com/client/v4/zones/$CF_ZONE_ID/dns_records" \
-              -H "Authorization: Bearer $CF_API_TOKEN" \
-              -H "Content-Type: application/json" \
-              -d "$PAYLOAD"
-            echo "Created DNS A record $GATEWAY_HOST → $EC2_IP"
+            RECORD_ID=$(echo "$EXISTING" | jq -r '.result[0].id // empty')
+            CURRENT_IP=$(echo "$EXISTING" | jq -r '.result[0].content // empty')
+
+            if [ "$CURRENT_IP" = "$EC2_IP" ]; then
+              echo "DNS already up to date ($GATEWAY_HOST → $EC2_IP), skipping update."
+            elif [ -n "$RECORD_ID" ]; then
+              curl -s -X PUT \
+                "https://api.cloudflare.com/client/v4/zones/$CF_ZONE_ID/dns_records/$RECORD_ID" \
+                -H "Authorization: Bearer $CF_API_TOKEN" \
+                -H "Content-Type: application/json" \
+                -d "$PAYLOAD" | jq -c '{success,errors}'
+              echo "Updated DNS A record $RECORD_ID → $EC2_IP"
+            else
+              curl -s -X POST \
+                "https://api.cloudflare.com/client/v4/zones/$CF_ZONE_ID/dns_records" \
+                -H "Authorization: Bearer $CF_API_TOKEN" \
+                -H "Content-Type: application/json" \
+                -d "$PAYLOAD" | jq -c '{success,errors}'
+              echo "Created DNS A record $GATEWAY_HOST → $EC2_IP"
+            fi
           fi
 
       - name: Login to Amazon ECR
