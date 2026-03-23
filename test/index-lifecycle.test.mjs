@@ -483,3 +483,184 @@ describe("plugin lifecycle", () => {
     }
   })
 })
+
+// Base64 of "world-public-key" — test-only fixture, not a real secret
+const MOCK_WORLD_PUB = "d29ybGQtcHVibGljLWtleQ=="
+
+describe("world_action tool", () => {
+  it("sends a world.action message with correct payload", async () => {
+    const worldAgentId = "aw:sha256:world-host"
+    const harness = createHarness({
+      pingInfo: { ok: true, data: { agentId: worldAgentId, publicKey: MOCK_WORLD_PUB } },
+      joinResponse: {
+        ok: true,
+        data: {
+          worldId: "arena",
+          manifest: { name: "Arena", actions: { say: { desc: "Say something" } } },
+          members: [],
+        },
+      },
+    })
+
+    try {
+      await harness.service.start()
+
+      const joinWorld = harness.tools.get("join_world")
+      await joinWorld.execute("t-1", { address: "203.0.113.10:9000" })
+
+      const worldAction = harness.tools.get("world_action")
+      const result = await worldAction.execute("t-2", { action: "say", action_params: { text: "hello" } })
+
+      assert.equal(result.isError, undefined)
+      assert.ok(result.content[0].text.includes("say"))
+
+      const actionCall = harness.sendCalls.find((call) => call.event === "world.action")
+      assert.ok(actionCall)
+      const payload = JSON.parse(actionCall.content)
+      assert.equal(payload.action, "say")
+      assert.equal(payload.text, "hello")
+      assert.equal(actionCall.targetAddr, "203.0.113.10")
+      assert.equal(actionCall.port, 9000)
+    } finally {
+      harness.restore()
+    }
+  })
+
+  it("auto-selects the only joined world when world_id is omitted", async () => {
+    const worldAgentId = "aw:sha256:world-host"
+    const harness = createHarness({
+      pingInfo: { ok: true, data: { agentId: worldAgentId, publicKey: MOCK_WORLD_PUB } },
+      joinResponse: {
+        ok: true,
+        data: {
+          worldId: "arena",
+          manifest: { name: "Arena" },
+          members: [],
+        },
+      },
+    })
+
+    try {
+      await harness.service.start()
+
+      const joinWorld = harness.tools.get("join_world")
+      await joinWorld.execute("t-1", { address: "203.0.113.10:9000" })
+
+      const worldAction = harness.tools.get("world_action")
+      const result = await worldAction.execute("t-2", { action: "move" })
+
+      assert.equal(result.isError, undefined)
+      assert.ok(result.content[0].text.includes("arena"))
+    } finally {
+      harness.restore()
+    }
+  })
+
+  it("rejects when no worlds are joined", async () => {
+    const harness = createHarness()
+
+    try {
+      await harness.service.start()
+
+      const worldAction = harness.tools.get("world_action")
+      const result = await worldAction.execute("t-1", { action: "say" })
+
+      assert.equal(result.isError, true)
+      assert.ok(result.content[0].text.includes("Not joined"))
+    } finally {
+      harness.restore()
+    }
+  })
+
+  it("rejects ambiguous world_id when multiple worlds are joined", async () => {
+    const worldAgentId = "aw:sha256:world-host"
+    let joinCount = 0
+    const harness = createHarness({
+      pingInfo: { ok: true, data: { agentId: worldAgentId, publicKey: MOCK_WORLD_PUB } },
+      joinResponse: {
+        ok: true,
+        data: {
+          worldId: "arena",
+          manifest: { name: "Arena" },
+          members: [],
+        },
+      },
+    })
+
+    // Override sendP2PMessage to return different worldIds
+    const peerClientMod = createRequire(import.meta.url)("../dist/peer-client.js")
+    const origSend = peerClientMod.sendP2PMessage
+    peerClientMod.sendP2PMessage = async (_identity, targetAddr, event, content, port, timeoutMs, opts) => {
+      harness.sendCalls.push({ targetAddr, event, content, port, timeoutMs, opts })
+      if (event === "world.join") {
+        joinCount++
+        return {
+          ok: true,
+          data: {
+            worldId: joinCount === 1 ? "arena" : "lobby",
+            manifest: { name: joinCount === 1 ? "Arena" : "Lobby" },
+            members: [],
+          },
+        }
+      }
+      return { ok: true }
+    }
+
+    try {
+      await harness.service.start()
+
+      const joinWorld = harness.tools.get("join_world")
+      await joinWorld.execute("t-1", { address: "203.0.113.10:9000" })
+      await joinWorld.execute("t-2", { address: "203.0.113.10:9001" })
+
+      const worldAction = harness.tools.get("world_action")
+      const result = await worldAction.execute("t-3", { action: "say" })
+
+      assert.equal(result.isError, true)
+      assert.ok(result.content[0].text.includes("Multiple worlds"))
+      assert.ok(result.content[0].text.includes("Specify world_id"))
+    } finally {
+      peerClientMod.sendP2PMessage = origSend
+      harness.restore()
+    }
+  })
+
+  it("awn_status includes available actions from cached manifest", async () => {
+    const worldAgentId = "aw:sha256:world-host"
+    const harness = createHarness({
+      pingInfo: { ok: true, data: { agentId: worldAgentId, publicKey: MOCK_WORLD_PUB } },
+      joinResponse: {
+        ok: true,
+        data: {
+          worldId: "arena",
+          manifest: {
+            name: "Arena",
+            actions: {
+              say: { desc: "Say something" },
+              set_state: { desc: "Update your state" },
+            },
+          },
+          members: [],
+        },
+      },
+    })
+
+    try {
+      await harness.service.start()
+
+      const joinWorld = harness.tools.get("join_world")
+      await joinWorld.execute("t-1", { address: "203.0.113.10:9000" })
+
+      const awnStatus = harness.tools.get("awn_status")
+      const result = await awnStatus.execute("t-2", {})
+
+      const text = result.content[0].text
+      assert.ok(text.includes("arena"))
+      assert.ok(text.includes("Arena"))
+      assert.ok(text.includes("say (Say something)"))
+      assert.ok(text.includes("set_state (Update your state)"))
+    } finally {
+      harness.restore()
+    }
+  })
+})

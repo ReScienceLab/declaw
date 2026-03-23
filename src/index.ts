@@ -21,7 +21,7 @@ import { parseDirectPeerAddress } from "./address"
 const AWN_TOOLS = [
   "awn_list_peers",
   "awn_send_message", "awn_status",
-  "list_worlds", "join_world",
+  "list_worlds", "join_world", "world_action",
 ]
 
 function ensureToolsAllowed(config: any): void {
@@ -71,7 +71,14 @@ let _transportManager: TransportManager | null = null
 let _quicTransport: UDPTransport | null = null
 
 // Track joined worlds for periodic member refresh
-const _joinedWorlds = new Map<string, { agentId: string; address: string; port: number; publicKey: string }>()
+interface JoinedWorldInfo {
+  agentId: string
+  address: string
+  port: number
+  publicKey: string
+  manifest?: { name: string; actions?: Record<string, { desc: string; params?: Record<string, unknown> }> }
+}
+const _joinedWorlds = new Map<string, JoinedWorldInfo>()
 const _worldMembersByWorld = new Map<string, Set<string>>()
 const _worldScopedPeerWorlds = new Map<string, Set<string>>()
 const _worldRefreshFailures = new Map<string, number>()
@@ -552,7 +559,13 @@ export default function register(api: any) {
           }
           console.log("=== Joined Worlds ===")
           for (const [id, info] of _joinedWorlds) {
-            console.log(`  ${id} — ${info.address}:${info.port}`)
+            const name = info.manifest?.name ?? id
+            console.log(`  ${id} — ${name} (${info.address}:${info.port})`)
+            const actions = info.manifest?.actions
+            if (actions && Object.keys(actions).length > 0) {
+              const actionList = Object.entries(actions).map(([k, v]) => `${k} (${v.desc})`).join(", ")
+              console.log(`    Actions: ${actionList}`)
+            }
           }
         })
     },
@@ -671,6 +684,15 @@ export default function register(api: any) {
         `Known peers: ${peers.length}`,
         `Worlds joined: ${_joinedWorlds.size}`,
       ]
+      for (const [id, info] of _joinedWorlds) {
+        const name = info.manifest?.name ?? id
+        lines.push(`  ${id} — ${name}`)
+        const actions = info.manifest?.actions
+        if (actions && Object.keys(actions).length > 0) {
+          const actionList = Object.entries(actions).map(([k, v]) => `${k} (${v.desc})`).join(", ")
+          lines.push(`    Actions: ${actionList}`)
+        }
+      }
       return { content: [{ type: "text", text: lines.join("\n") }] }
     },
   })
@@ -848,13 +870,67 @@ export default function register(api: any) {
       addWorldMembers(worldId, [worldAgentId!, ...joinMembers.map(m => m.agentId).filter(id => id !== identity!.agentId)])
 
       // Track this world for periodic member refresh
-      _joinedWorlds.set(worldId, { agentId: worldAgentId!, address: targetAddr, port: targetPort, publicKey: worldPublicKey })
+      const manifest = typeof result.data?.manifest === "object" && result.data?.manifest
+        ? result.data.manifest as JoinedWorldInfo["manifest"]
+        : undefined
+      _joinedWorlds.set(worldId, { agentId: worldAgentId!, address: targetAddr, port: targetPort, publicKey: worldPublicKey, manifest })
       _worldRefreshFailures.delete(worldId)
       if (!_memberRefreshTimer) {
         _memberRefreshTimer = setInterval(refreshWorldMembers, MEMBER_REFRESH_INTERVAL_MS)
       }
 
       return { content: [{ type: "text", text: `Joined world '${worldId}' — ${memberCount} other member(s) discovered` }] }
+    },
+  })
+
+  api.registerTool({
+    name: "world_action",
+    description: "Perform an action in a joined world (e.g. say, set_state). Use awn_status() to see joined worlds and available actions.",
+    parameters: {
+      type: "object",
+      properties: {
+        world_id: { type: "string", description: "Target world ID. Auto-selected if only one world is joined." },
+        action: { type: "string", description: "Action name as defined in the world manifest." },
+        action_params: { type: "object", description: "Action-specific parameters (varies by world and action)." },
+      },
+      required: ["action"],
+    },
+    async execute(_id: string, params: { world_id?: string; action: string; action_params?: Record<string, unknown> }) {
+      if (!identity) {
+        return { content: [{ type: "text", text: "AWN service not started." }], isError: true }
+      }
+      if (_joinedWorlds.size === 0) {
+        return { content: [{ type: "text", text: "Not joined any worlds. Use join_world first." }], isError: true }
+      }
+
+      let worldId = params.world_id
+      if (!worldId) {
+        if (_joinedWorlds.size === 1) {
+          worldId = [..._joinedWorlds.keys()][0]
+        } else {
+          const ids = [..._joinedWorlds.keys()].join(", ")
+          return { content: [{ type: "text", text: `Multiple worlds joined (${ids}). Specify world_id.` }], isError: true }
+        }
+      }
+
+      const info = _joinedWorlds.get(worldId)
+      if (!info) {
+        return { content: [{ type: "text", text: `Not joined world '${worldId}'.` }], isError: true }
+      }
+
+      const actionPayload = JSON.stringify({ action: params.action, ...(params.action_params ?? {}) })
+      const sendOpts = buildSendOpts(info.agentId)
+      sendOpts.expectedPublicKey = info.publicKey
+      const result = await sendP2PMessage(identity, info.address, "world.action", actionPayload, info.port, 10_000, sendOpts)
+
+      if (!result.ok) {
+        return { content: [{ type: "text", text: `Action failed: ${result.error}` }], isError: true }
+      }
+
+      const stateText = result.data?.state !== undefined
+        ? `\nState: ${JSON.stringify(result.data.state)}`
+        : ""
+      return { content: [{ type: "text", text: `Action '${params.action}' executed in world '${worldId}'.${stateText}` }] }
     },
   })
 

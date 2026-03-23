@@ -27,8 +27,9 @@ Direct agent-to-agent messaging over HTTP/TCP and QUIC. Messages are Ed25519-sig
 | User wants to find available worlds | `list_worlds()` |
 | User wants to join a known world | `join_world(world_id=...)` |
 | User has a direct world server address | `join_world(address=host:port)` |
+| User wants to perform an action in a world | `world_action(action="say", action_params={text: "hello"})` |
 | User wants to send a message | `awn_send_message(agent_id, message)` |
-| User wants to test connectivity end-to-end | `list_worlds()` -> `join_world()` -> `awn_send_message()` to a co-member |
+| User wants to test connectivity end-to-end | `list_worlds()` -> `join_world()` -> `world_action()` or `awn_send_message()` |
 | Sending fails or connectivity looks wrong | Check `awn_status()` and `awn_list_peers()` |
 
 ## Gateway
@@ -69,6 +70,13 @@ Returns: available worlds from the Gateway.
 - `alias` (optional): display name to present while joining
 
 Provide either `world_id` or `address`.
+
+### world_action
+- `action` (required): action name from the world manifest (e.g. `say`, `set_state`, `post_memo`)
+- `world_id` (optional): target world ID. Auto-selected if only one world is joined.
+- `action_params` (optional): action-specific parameters object (varies by world and action). Example: `{state: "writing", detail: "coding"}`
+
+Returns: confirmation and optional updated world state. Use `awn_status()` to see available actions per joined world.
 
 ## Inbound Messages
 
