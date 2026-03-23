@@ -31,6 +31,7 @@
  */
 import fs from "node:fs"
 import path from "node:path"
+import { fileURLToPath } from "node:url"
 import Fastify from "fastify"
 import websocketPlugin from "@fastify/websocket"
 import cors from "@fastify/cors"
@@ -48,503 +49,518 @@ import {
   DOMAIN_SEPARATORS,
 } from "@resciencelab/agent-world-sdk"
 
-const PEER_PORT = parseInt(process.env.PEER_PORT ?? "8099")
-const HTTP_PORT = parseInt(process.env.HTTP_PORT ?? "8100")
-const PUBLIC_ADDR = process.env.PUBLIC_ADDR ?? null
-const PUBLIC_URL = process.env.PUBLIC_URL ?? null // e.g. https://gateway.example.com
-const DATA_DIR = process.env.DATA_DIR ?? "/data"
-const STALE_TTL_MS = parseInt(process.env.STALE_TTL_MS ?? String(15 * 60 * 1000)) // 15 min
+const DEFAULT_PEER_PORT = parseInt(process.env.PEER_PORT ?? "8099")
+const DEFAULT_HTTP_PORT = parseInt(process.env.HTTP_PORT ?? "8100")
+const DEFAULT_PUBLIC_ADDR = process.env.PUBLIC_ADDR ?? null
+const DEFAULT_PUBLIC_URL = process.env.PUBLIC_URL ?? null
+const DEFAULT_DATA_DIR = process.env.DATA_DIR ?? "/data"
+const DEFAULT_STALE_TTL_MS = parseInt(process.env.STALE_TTL_MS ?? String(15 * 60 * 1000))
 const MAX_AGENTS = 500
 const REGISTRY_VERSION = 1
-const REGISTRY_PATH = path.join(DATA_DIR, "registry.json")
-const REGISTRY_TMP_PATH = `${REGISTRY_PATH}.tmp`
 const SAVE_DEBOUNCE_MS = 1000
 
 // ---------------------------------------------------------------------------
-// Identity (loaded via agent-world-sdk)
+// Factory — all state is scoped to each createGatewayApp() invocation
 // ---------------------------------------------------------------------------
 
-const identity = loadOrCreateIdentity(DATA_DIR, "gateway-identity")
-const selfPubB64 = identity.pubB64
-const selfAgentId = identity.agentId
+export async function createGatewayApp(opts = {}) {
+  const {
+    dataDir = DEFAULT_DATA_DIR,
+    httpPort = DEFAULT_HTTP_PORT,
+    peerPort = DEFAULT_PEER_PORT,
+    publicAddr = DEFAULT_PUBLIC_ADDR,
+    publicUrl = DEFAULT_PUBLIC_URL,
+    staleTtlMs = DEFAULT_STALE_TTL_MS,
+  } = opts
 
-console.log(`[gateway] agentId=${selfAgentId}`)
+  const REGISTRY_PATH = path.join(dataDir, "registry.json")
+  const REGISTRY_TMP_PATH = `${REGISTRY_PATH}.tmp`
 
-// ---------------------------------------------------------------------------
-// Registry
-// ---------------------------------------------------------------------------
-const registry = new Map() // agentId -> PeerRecord
-let _saveTimer = null
-let _pruneTimer = null
-let _shutdownPromise = null
-let _registryModifiedAt = null
+  // ---------------------------------------------------------------------------
+  // Identity
+  // ---------------------------------------------------------------------------
 
-function writeRegistry() {
-  fs.mkdirSync(DATA_DIR, { recursive: true })
-  const payload = {
-    version: REGISTRY_VERSION,
-    savedAt: Date.now(),
-    agents: Object.fromEntries([...registry.entries()]),
+  const identity = loadOrCreateIdentity(dataDir, "gateway-identity")
+  const selfPubB64 = identity.pubB64
+  const selfAgentId = identity.agentId
+
+  // ---------------------------------------------------------------------------
+  // Registry
+  // ---------------------------------------------------------------------------
+
+  const registry = new Map() // agentId -> PeerRecord
+  let _saveTimer = null
+  let _pruneTimer = null
+  let _shutdownPromise = null
+  let _registryModifiedAt = null
+
+  function writeRegistry() {
+    fs.mkdirSync(dataDir, { recursive: true })
+    const payload = {
+      version: REGISTRY_VERSION,
+      savedAt: Date.now(),
+      agents: Object.fromEntries([...registry.entries()]),
+    }
+    fs.writeFileSync(REGISTRY_TMP_PATH, JSON.stringify(payload, null, 2))
+    fs.renameSync(REGISTRY_TMP_PATH, REGISTRY_PATH)
   }
-  fs.writeFileSync(REGISTRY_TMP_PATH, JSON.stringify(payload, null, 2))
-  fs.renameSync(REGISTRY_TMP_PATH, REGISTRY_PATH)
-}
 
-function loadRegistry() {
-  if (!fs.existsSync(REGISTRY_PATH)) {
-    console.warn(`[gateway] Registry file missing at ${REGISTRY_PATH}; starting with empty registry`)
-    registry.clear()
-    _registryModifiedAt = null
-    return
-  }
-
-  try {
-    const raw = JSON.parse(fs.readFileSync(REGISTRY_PATH, "utf8"))
-    if (raw?.version !== REGISTRY_VERSION || !raw?.agents || typeof raw.agents !== "object") {
-      throw new Error("invalid registry schema")
+  function loadRegistry() {
+    if (!fs.existsSync(REGISTRY_PATH)) {
+      console.warn(`[gateway] Registry file missing at ${REGISTRY_PATH}; starting with empty registry`)
+      registry.clear()
+      _registryModifiedAt = null
+      return
     }
 
-    registry.clear()
-    const cutoff = Date.now() - STALE_TTL_MS
-    let loaded = 0
-    let discarded = 0
+    try {
+      const raw = JSON.parse(fs.readFileSync(REGISTRY_PATH, "utf8"))
+      if (raw?.version !== REGISTRY_VERSION || !raw?.agents || typeof raw.agents !== "object") {
+        throw new Error("invalid registry schema")
+      }
 
-    for (const [agentId, record] of Object.entries(raw.agents)) {
-      if (!record || typeof record !== "object") {
-        discarded++
-        continue
+      registry.clear()
+      const cutoff = Date.now() - staleTtlMs
+      let loaded = 0
+      let discarded = 0
+
+      for (const [agentId, record] of Object.entries(raw.agents)) {
+        if (!record || typeof record !== "object") {
+          discarded++
+          continue
+        }
+        const lastSeen = typeof record.lastSeen === "number" ? record.lastSeen : 0
+        if (lastSeen < cutoff) {
+          discarded++
+          continue
+        }
+        registry.set(agentId, record)
+        loaded++
       }
-      const lastSeen = typeof record.lastSeen === "number" ? record.lastSeen : 0
-      if (lastSeen < cutoff) {
-        discarded++
-        continue
+
+      _registryModifiedAt = loaded > 0
+        ? (typeof raw.savedAt === "number" ? raw.savedAt : Date.now())
+        : null
+      console.log(`[gateway] Loaded ${loaded} agents from registry (discarded ${discarded} stale)`)
+    } catch (error) {
+      console.warn(`[gateway] Failed to load registry from ${REGISTRY_PATH}; starting with empty registry`, error)
+      registry.clear()
+      _registryModifiedAt = null
+    }
+  }
+
+  function saveRegistry() {
+    if (_saveTimer) return
+    _saveTimer = setTimeout(() => {
+      _saveTimer = null
+      try {
+        writeRegistry()
+      } catch (error) {
+        console.warn(`[gateway] Failed to save registry to ${REGISTRY_PATH}`, error)
       }
-      registry.set(agentId, record)
-      loaded++
+    }, SAVE_DEBOUNCE_MS)
+  }
+
+  function flushRegistry() {
+    if (_saveTimer) {
+      clearTimeout(_saveTimer)
+      _saveTimer = null
     }
 
-    _registryModifiedAt = loaded > 0
-      ? (typeof raw.savedAt === "number" ? raw.savedAt : Date.now())
-      : null
-    console.log(`[gateway] Loaded ${loaded} agents from registry (discarded ${discarded} stale)`)
-  } catch (error) {
-    console.warn(`[gateway] Failed to load registry from ${REGISTRY_PATH}; starting with empty registry`, error)
-    registry.clear()
-    _registryModifiedAt = null
-  }
-}
-
-function saveRegistry() {
-  if (_saveTimer) return
-  _saveTimer = setTimeout(() => {
-    _saveTimer = null
     try {
       writeRegistry()
     } catch (error) {
-      console.warn(`[gateway] Failed to save registry to ${REGISTRY_PATH}`, error)
+      console.warn(`[gateway] Failed to flush registry to ${REGISTRY_PATH}`, error)
     }
-  }, SAVE_DEBOUNCE_MS)
-}
-
-function flushRegistry() {
-  if (_saveTimer) {
-    clearTimeout(_saveTimer)
-    _saveTimer = null
   }
 
-  try {
-    writeRegistry()
-  } catch (error) {
-    console.warn(`[gateway] Failed to flush registry to ${REGISTRY_PATH}`, error)
-  }
-}
-
-function upsertAgent(agentId, publicKey, opts = {}) {
-  const persist = opts.persist === true
-  const now = Date.now()
-  const existing = registry.get(agentId)
-  // For gossipped agents, preserve the original lastSeen from the sender
-  // Only use Date.now() for direct contacts (no lastSeen provided)
-  const lastSeen = opts.lastSeen
-    ? Math.max(existing?.lastSeen ?? 0, opts.lastSeen)
-    : now
-  const nextRecord = {
-    agentId,
-    publicKey: publicKey || existing?.publicKey || "",
-    alias: opts.alias ?? existing?.alias ?? "",
-    endpoints: opts.endpoints ?? existing?.endpoints ?? [],
-    capabilities: opts.capabilities ?? existing?.capabilities ?? [],
-    lastSeen,
-  }
-  const changed = JSON.stringify(existing ?? null) !== JSON.stringify(nextRecord)
-  registry.set(agentId, nextRecord)
-  let trimmed = false
-  if (registry.size > MAX_AGENTS) {
-    const oldest = [...registry.values()].sort((a, b) => a.lastSeen - b.lastSeen)[0]
-    registry.delete(oldest.agentId)
-    trimmed = true
-  }
-  if (changed || trimmed) {
-    _registryModifiedAt = now
-  }
-  if (persist && (changed || trimmed)) {
-    saveRegistry()
-  }
-}
-
-function pruneStaleAgents(ttl = STALE_TTL_MS) {
-  const cutoff = Date.now() - ttl
-  let pruned = 0
-  for (const [id, p] of registry) {
-    if (p.lastSeen < cutoff) { registry.delete(id); pruned++ }
-  }
-  if (pruned > 0) {
-    console.log(`[gateway] Pruned ${pruned} stale agent(s) (TTL ${Math.round(ttl / 60000)}min)`)
-    flushRegistry()
-  }
-}
-
-function getAgentsForExchange(limit = 50) {
-  return [...registry.values()]
-    .sort((a, b) => b.lastSeen - a.lastSeen)
-    .slice(0, limit)
-    .map(({ agentId, publicKey, alias, endpoints, capabilities, lastSeen }) => ({
-      agentId, publicKey, alias, endpoints: endpoints ?? [], capabilities: capabilities ?? [], lastSeen,
-    }))
-}
-
-function findByCapability(cap) {
-  const isPrefix = cap.endsWith(":");
-  return [...registry.values()].filter((p) =>
-    p.capabilities?.some((c) => isPrefix ? c.startsWith(cap) : c === cap)
-  ).sort((a, b) => b.lastSeen - a.lastSeen);
-}
-
-// ---------------------------------------------------------------------------
-// WebSocket subscriptions: worldId -> Set<WebSocket>
-// ---------------------------------------------------------------------------
-const worldSubs = new Map(); // worldId -> Set<ws>
-// browser session agentIds: sessionId -> { agentId, publicKey, secretKey, alias, worldId }
-const sessions = new Map();
-
-function broadcast(worldId, data) {
-  const subs = worldSubs.get(worldId);
-  if (!subs) return;
-  const msg = JSON.stringify(data);
-  for (const ws of subs) {
-    try { ws.send(msg); } catch {}
-  }
-}
-
-function subscribe(worldId, ws) {
-  if (!worldSubs.has(worldId)) worldSubs.set(worldId, new Set());
-  worldSubs.get(worldId).add(ws);
-}
-
-function unsubscribe(worldId, ws) {
-  worldSubs.get(worldId)?.delete(ws);
-  if (worldSubs.get(worldId)?.size === 0) worldSubs.delete(worldId);
-}
-
-// ---------------------------------------------------------------------------
-// Outbound AWN messaging (gateway → world agent)
-// ---------------------------------------------------------------------------
-
-async function sendToWorld(worldId, event, content) {
-  const world = findByCapability(`world:${worldId}`)[0];
-  if (!world?.endpoints?.length) {
-    console.warn(`[gateway] No reachable endpoints for world:${worldId}`);
-    return { ok: false, error: "World agent not reachable" };
-  }
-  const sorted = [...world.endpoints].sort((a, b) => a.priority - b.priority);
-  const payload = {
-    from: selfAgentId,
-    publicKey: selfPubB64,
-    event,
-    content: typeof content === "string" ? content : JSON.stringify(content),
-    timestamp: Date.now(),
-  };
-  payload.signature = signPayload(payload, identity.secretKey);
-
-  for (const ep of sorted) {
-    try {
-      const addr = ep.address;
-      const port = ep.port ?? PEER_PORT;
-      const isIpv6 = addr.includes(":") && !addr.includes(".");
-      const url = isIpv6 ? `http://[${addr}]:${port}/peer/message` : `http://${addr}:${port}/peer/message`;
-      const body = JSON.stringify(canonicalize(payload));
-      const urlObj = new URL(url);
-      const awHeaders = signHttpRequest(identity, "POST", urlObj.host, "/peer/message", body);
-      const resp = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...awHeaders },
-        body,
-        signal: AbortSignal.timeout(8_000),
-      });
-      const data = await resp.json();
-      return { ok: resp.ok, ...data };
-    } catch {}
-  }
-  return { ok: false, error: "All world agent endpoints unreachable" };
-}
-
-// ---------------------------------------------------------------------------
-// Public HTTP + WebSocket server
-// ---------------------------------------------------------------------------
-
-const app = Fastify({ logger: false });
-await app.register(cors, { origin: true });
-await app.register(websocketPlugin);
-
-app.get("/health", async () => {
-  const ts = Date.now()
-  const worlds = findByCapability("world:").length
-  const agents = registry.size
-  const registryAge = agents > 0 && _registryModifiedAt !== null
-    ? Math.max(0, ts - _registryModifiedAt)
-    : null
-  const status = worlds > 0 ? "ready" : agents > 0 ? "warming" : "empty"
-
-  return {
-    ok: true,
-    ts,
-    agentId: selfAgentId,
-    agents,
-    worlds,
-    registryAge,
-    status,
-  }
-});
-
-// Agent Card — served as canonical JSON so bytes on wire match the JWS signature
-let _cachedCardJson = null
-app.get("/.well-known/agent.json", async (_req, reply) => {
-  if (!_cachedCardJson) {
-    const cardUrl = PUBLIC_URL
-      ? `${PUBLIC_URL.replace(/\/$/, "")}/.well-known/agent.json`
-      : `http://${PUBLIC_ADDR ?? "localhost"}:${HTTP_PORT}/.well-known/agent.json`;
-    _cachedCardJson = await buildSignedAgentCard(
-      { name: "AWN Gateway", cardUrl, profiles: ["core/v0.2"], nodeClass: "CoreNode" },
-      identity
-    );
-  }
-  reply.header("Content-Type", "application/json; charset=utf-8");
-  reply.header("Cache-Control", "public, max-age=300");
-  reply.send(_cachedCardJson);
-});
-
-app.get("/agents", async () => ({
-  agents: getAgentsForExchange(100),
-}));
-
-app.get("/worlds", async () => {
-  const worlds = findByCapability("world:");
-  return {
-    worlds: worlds.map((w) => {
-      const cap = w.capabilities.find((c) => c.startsWith("world:")) ?? "";
-      const worldId = cap.slice("world:".length);
-      return {
-        worldId,
-        agentId: w.agentId,
-        name: w.alias || worldId,
-        reachable: w.endpoints?.length > 0,
-        lastSeen: w.lastSeen,
-      };
-    }),
-  };
-});
-
-app.get("/world/:worldId", async (req, reply) => {
-  const { worldId } = req.params;
-  const worlds = findByCapability(`world:${worldId}`);
-  if (!worlds.length) return reply.code(404).send({ error: "World not found" });
-  const w = worlds[0];
-  return {
-    worldId,
-    agentId: w.agentId,
-    publicKey: w.publicKey,
-    name: w.alias || worldId,
-    endpoints: w.endpoints,
-    reachable: w.endpoints?.length > 0,
-    subscribers: worldSubs.get(worldId)?.size ?? 0,
-    lastSeen: w.lastSeen,
-  };
-});
-
-// WebSocket endpoint: /ws?world=<worldId>
-app.get("/ws", { websocket: true }, (socket, req) => {
-  const worldId = new URL(req.url, "http://x").searchParams.get("world");
-  if (!worldId) {
-    socket.send(JSON.stringify({ type: "error", message: "Missing ?world= param" }));
-    socket.close();
-    return;
+  function upsertAgent(agentId, publicKey, opts = {}) {
+    const persist = opts.persist === true
+    const now = Date.now()
+    const existing = registry.get(agentId)
+    const lastSeen = opts.lastSeen
+      ? Math.max(existing?.lastSeen ?? 0, opts.lastSeen)
+      : now
+    const nextRecord = {
+      agentId,
+      publicKey: publicKey || existing?.publicKey || "",
+      alias: opts.alias ?? existing?.alias ?? "",
+      endpoints: opts.endpoints ?? existing?.endpoints ?? [],
+      capabilities: opts.capabilities ?? existing?.capabilities ?? [],
+      lastSeen,
+    }
+    const changed = JSON.stringify(existing ?? null) !== JSON.stringify(nextRecord)
+    registry.set(agentId, nextRecord)
+    let trimmed = false
+    if (registry.size > MAX_AGENTS) {
+      const oldest = [...registry.values()].sort((a, b) => a.lastSeen - b.lastSeen)[0]
+      registry.delete(oldest.agentId)
+      trimmed = true
+    }
+    if (changed || trimmed) {
+      _registryModifiedAt = now
+    }
+    if (persist && (changed || trimmed)) {
+      saveRegistry()
+    }
   }
 
-  // Generate ephemeral browser session identity
-  const seed = nacl.randomBytes(32);
-  const kp = nacl.sign.keyPair.fromSeed(seed);
-  const pubB64 = Buffer.from(kp.publicKey).toString("base64");
-  const agentId = agentIdFromPublicKey(pubB64);
-  const sessionId = agentId;
+  function pruneStaleAgents(ttl = staleTtlMs) {
+    const cutoff = Date.now() - ttl
+    let pruned = 0
+    for (const [id, p] of registry) {
+      if (p.lastSeen < cutoff) { registry.delete(id); pruned++ }
+    }
+    if (pruned > 0) {
+      console.log(`[gateway] Pruned ${pruned} stale agent(s) (TTL ${Math.round(ttl / 60000)}min)`)
+      flushRegistry()
+    }
+  }
 
-  sessions.set(sessionId, { agentId, keypair: kp, pubB64, worldId, alias: `guest-${agentId.slice(0, 6)}` });
-  subscribe(worldId, socket);
+  function getAgentsForExchange(limit = 50) {
+    return [...registry.values()]
+      .sort((a, b) => b.lastSeen - a.lastSeen)
+      .slice(0, limit)
+      .map(({ agentId, publicKey, alias, endpoints, capabilities, lastSeen }) => ({
+        agentId, publicKey, alias, endpoints: endpoints ?? [], capabilities: capabilities ?? [], lastSeen,
+      }))
+  }
 
-  socket.send(JSON.stringify({ type: "connected", agentId, worldId }));
-  console.log(`[gateway] WS connected: ${agentId.slice(0, 8)} → world:${worldId}`);
+  function findByCapability(cap) {
+    const isPrefix = cap.endsWith(":");
+    return [...registry.values()].filter((p) =>
+      p.capabilities?.some((c) => isPrefix ? c.startsWith(cap) : c === cap)
+    ).sort((a, b) => b.lastSeen - a.lastSeen);
+  }
 
-  socket.on("message", async (raw) => {
-    let msg;
-    try { msg = JSON.parse(raw.toString()); } catch { return; }
+  // ---------------------------------------------------------------------------
+  // WebSocket subscriptions
+  // ---------------------------------------------------------------------------
 
-    const session = sessions.get(sessionId);
-    if (!session) return;
+  const worldSubs = new Map()
+  const sessions = new Map()
 
-    switch (msg.type) {
-      case "join": {
-        if (msg.alias) session.alias = msg.alias.slice(0, 32);
-        const result = await sendToWorld(worldId, "world.join", {
-          alias: session.alias, agentId: session.agentId,
+  function broadcast(worldId, data) {
+    const subs = worldSubs.get(worldId);
+    if (!subs) return;
+    const msg = JSON.stringify(data);
+    for (const ws of subs) {
+      try { ws.send(msg); } catch {}
+    }
+  }
+
+  function subscribe(worldId, ws) {
+    if (!worldSubs.has(worldId)) worldSubs.set(worldId, new Set());
+    worldSubs.get(worldId).add(ws);
+  }
+
+  function unsubscribe(worldId, ws) {
+    worldSubs.get(worldId)?.delete(ws);
+    if (worldSubs.get(worldId)?.size === 0) worldSubs.delete(worldId);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Outbound AWN messaging (gateway → world agent)
+  // ---------------------------------------------------------------------------
+
+  async function sendToWorld(worldId, event, content) {
+    const world = findByCapability(`world:${worldId}`)[0];
+    if (!world?.endpoints?.length) {
+      console.warn(`[gateway] No reachable endpoints for world:${worldId}`);
+      return { ok: false, error: "World agent not reachable" };
+    }
+    const sorted = [...world.endpoints].sort((a, b) => a.priority - b.priority);
+    const payload = {
+      from: selfAgentId,
+      publicKey: selfPubB64,
+      event,
+      content: typeof content === "string" ? content : JSON.stringify(content),
+      timestamp: Date.now(),
+    };
+    payload.signature = signPayload(payload, identity.secretKey);
+
+    for (const ep of sorted) {
+      try {
+        const addr = ep.address;
+        const port = ep.port ?? peerPort;
+        const isIpv6 = addr.includes(":") && !addr.includes(".");
+        const url = isIpv6 ? `http://[${addr}]:${port}/peer/message` : `http://${addr}:${port}/peer/message`;
+        const body = JSON.stringify(canonicalize(payload));
+        const urlObj = new URL(url);
+        const awHeaders = signHttpRequest(identity, "POST", urlObj.host, "/peer/message", body);
+        const resp = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...awHeaders },
+          body,
+          signal: AbortSignal.timeout(8_000),
         });
-        socket.send(JSON.stringify({ type: "join_result", ...result }));
-        break;
-      }
-      case "action": {
-        const result = await sendToWorld(worldId, "world.action", {
-          action: msg.action, agentId: session.agentId,
-          x: msg.x, y: msg.y, data: msg.data,
-        });
-        socket.send(JSON.stringify({ type: "action_result", ...result }));
-        break;
-      }
-      case "leave": {
-        await sendToWorld(worldId, "world.leave", { agentId: session.agentId });
-        break;
-      }
+        const data = await resp.json();
+        return { ok: resp.ok, ...data };
+      } catch {}
+    }
+    return { ok: false, error: "All world agent endpoints unreachable" };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Public HTTP + WebSocket server
+  // ---------------------------------------------------------------------------
+
+  const app = Fastify({ logger: false });
+  await app.register(cors, { origin: true });
+  await app.register(websocketPlugin);
+
+  app.get("/health", async () => {
+    const ts = Date.now()
+    const worlds = findByCapability("world:").length
+    const agents = registry.size
+    const registryAge = agents > 0 && _registryModifiedAt !== null
+      ? Math.max(0, ts - _registryModifiedAt)
+      : null
+    const status = worlds > 0 ? "ready" : agents > 0 ? "warming" : "empty"
+
+    return {
+      ok: true,
+      ts,
+      agentId: selfAgentId,
+      agents,
+      worlds,
+      registryAge,
+      status,
     }
   });
 
-  socket.on("close", async () => {
-    const session = sessions.get(sessionId);
-    if (session) {
-      await sendToWorld(worldId, "world.leave", { agentId: session.agentId });
-      sessions.delete(sessionId);
+  let _cachedCardJson = null
+  app.get("/.well-known/agent.json", async (_req, reply) => {
+    if (!_cachedCardJson) {
+      const cardUrl = publicUrl
+        ? `${publicUrl.replace(/\/$/, "")}/.well-known/agent.json`
+        : `http://${publicAddr ?? "localhost"}:${httpPort}/.well-known/agent.json`;
+      _cachedCardJson = await buildSignedAgentCard(
+        { name: "AWN Gateway", cardUrl, profiles: ["core/v0.2"], nodeClass: "CoreNode" },
+        identity
+      );
     }
-    unsubscribe(worldId, socket);
-    console.log(`[gateway] WS disconnected: ${sessionId.slice(0, 8)}`);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Peer routes (unified on HTTP_PORT — previously a separate server on PEER_PORT)
-// Scoped in a plugin so the rawBody content-type parser is isolated to /peer/*
-// ---------------------------------------------------------------------------
-
-await app.register(async (peer) => {
-  // rawBody needed for Content-Digest verification; scoped here to avoid
-  // overriding the default JSON parser on all other routes
-  peer.addContentTypeParser("application/json", { parseAs: "string" }, (req, body, done) => {
-    try {
-      req.rawBody = body;
-      done(null, JSON.parse(body));
-    } catch (err) {
-      done(err, undefined);
-    }
+    reply.header("Content-Type", "application/json; charset=utf-8");
+    reply.header("Cache-Control", "public, max-age=300");
+    reply.send(_cachedCardJson);
   });
 
-  peer.get("/peer/ping", async () => ({ ok: true, ts: Date.now(), role: "gateway" }));
-  peer.get("/peer/peers", async () => ({ peers: getAgentsForExchange() }));
+  app.get("/agents", async () => ({
+    agents: getAgentsForExchange(100),
+  }));
 
-  peer.post("/peer/announce", async (req, reply) => {
-    const ann = req.body;
-    if (!ann?.publicKey || !ann?.from) return reply.code(400).send({ error: "Invalid announce" });
+  app.get("/worlds", async () => {
+    const worlds = findByCapability("world:");
+    return {
+      worlds: worlds.map((w) => {
+        const cap = w.capabilities.find((c) => c.startsWith("world:")) ?? "";
+        const worldId = cap.slice("world:".length);
+        return {
+          worldId,
+          agentId: w.agentId,
+          name: w.alias || worldId,
+          reachable: w.endpoints?.length > 0,
+          lastSeen: w.lastSeen,
+        };
+      }),
+    };
+  });
 
-    const awSig = req.headers["x-agentworld-signature"];
-    if (awSig) {
-      const authority = req.headers["host"] ?? "localhost";
-      const result = verifyHttpRequestHeaders(req.headers, req.method, req.url, authority, req.rawBody, ann.publicKey);
-      if (!result.ok) return reply.code(403).send({ error: result.error });
-    } else {
-      const { signature, ...signable } = ann;
-      // Try domain-separated verification first, then fall back to plain for backward compat
-      const domainOk = verifyWithDomainSeparator(DOMAIN_SEPARATORS.ANNOUNCE, ann.publicKey, signable, signature);
-      if (!domainOk && !verifySignature(ann.publicKey, signable, signature)) {
-        return reply.code(403).send({ error: "Invalid signature" });
+  app.get("/world/:worldId", async (req, reply) => {
+    const { worldId } = req.params;
+    const worlds = findByCapability(`world:${worldId}`);
+    if (!worlds.length) return reply.code(404).send({ error: "World not found" });
+    const w = worlds[0];
+    return {
+      worldId,
+      agentId: w.agentId,
+      publicKey: w.publicKey,
+      name: w.alias || worldId,
+      endpoints: w.endpoints,
+      reachable: w.endpoints?.length > 0,
+      subscribers: worldSubs.get(worldId)?.size ?? 0,
+      lastSeen: w.lastSeen,
+    };
+  });
+
+  app.get("/ws", { websocket: true }, (socket, req) => {
+    const worldId = new URL(req.url, "http://x").searchParams.get("world");
+    if (!worldId) {
+      socket.send(JSON.stringify({ type: "error", message: "Missing ?world= param" }));
+      socket.close();
+      return;
+    }
+
+    const seed = nacl.randomBytes(32);
+    const kp = nacl.sign.keyPair.fromSeed(seed);
+    const pubB64 = Buffer.from(kp.publicKey).toString("base64");
+    const agentId = agentIdFromPublicKey(pubB64);
+    const sessionId = agentId;
+
+    sessions.set(sessionId, { agentId, keypair: kp, pubB64, worldId, alias: `guest-${agentId.slice(0, 6)}` });
+    subscribe(worldId, socket);
+
+    socket.send(JSON.stringify({ type: "connected", agentId, worldId }));
+    console.log(`[gateway] WS connected: ${agentId.slice(0, 8)} → world:${worldId}`);
+
+    socket.on("message", async (raw) => {
+      let msg;
+      try { msg = JSON.parse(raw.toString()); } catch { return; }
+
+      const session = sessions.get(sessionId);
+      if (!session) return;
+
+      switch (msg.type) {
+        case "join": {
+          if (msg.alias) session.alias = msg.alias.slice(0, 32);
+          const result = await sendToWorld(worldId, "world.join", {
+            alias: session.alias, agentId: session.agentId,
+          });
+          socket.send(JSON.stringify({ type: "join_result", ...result }));
+          break;
+        }
+        case "action": {
+          const result = await sendToWorld(worldId, "world.action", {
+            action: msg.action, agentId: session.agentId,
+            x: msg.x, y: msg.y, data: msg.data,
+          });
+          socket.send(JSON.stringify({ type: "action_result", ...result }));
+          break;
+        }
+        case "leave": {
+          await sendToWorld(worldId, "world.leave", { agentId: session.agentId });
+          break;
+        }
       }
-    }
-
-    if (agentIdFromPublicKey(ann.publicKey) !== ann.from) {
-      return reply.code(400).send({ error: "agentId mismatch" });
-    }
-    upsertAgent(ann.from, ann.publicKey, {
-      alias: ann.alias, endpoints: ann.endpoints, capabilities: ann.capabilities, persist: true,
     });
-    return { ok: true, peers: getAgentsForExchange(20) };
-  });
 
-  peer.post("/peer/message", async (req, reply) => {
-    const msg = req.body;
-    if (!msg?.publicKey || !msg?.from) return reply.code(400).send({ error: "Invalid message" });
-
-    const awSig = req.headers["x-agentworld-signature"];
-    if (awSig) {
-      const authority = req.headers["host"] ?? "localhost";
-      const result = verifyHttpRequestHeaders(req.headers, req.method, req.url, authority, req.rawBody, msg.publicKey);
-      if (!result.ok) return reply.code(403).send({ error: result.error });
-    } else {
-      const { signature, ...signable } = msg;
-      if (!verifySignature(msg.publicKey, signable, signature)) {
-        return reply.code(403).send({ error: "Invalid signature" });
+    socket.on("close", async () => {
+      const session = sessions.get(sessionId);
+      if (session) {
+        await sendToWorld(worldId, "world.leave", { agentId: session.agentId });
+        sessions.delete(sessionId);
       }
-    }
-
-    if (msg.event === "world.state") {
-      let state;
-      try { state = typeof msg.content === "string" ? JSON.parse(msg.content) : msg.content; } catch { return { ok: true }; }
-      const worldId = state.worldId;
-      if (worldId) broadcast(worldId, { type: "world.state", ...state });
-    }
-
-    return { ok: true };
+      unsubscribe(worldId, socket);
+      console.log(`[gateway] WS disconnected: ${sessionId.slice(0, 8)}`);
+    });
   });
-});
 
-// ---------------------------------------------------------------------------
-// Startup
-// ---------------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
+  // Peer routes
+  // ---------------------------------------------------------------------------
 
-async function shutdown(signal) {
-  if (_shutdownPromise) return _shutdownPromise
+  await app.register(async (peer) => {
+    peer.addContentTypeParser("application/json", { parseAs: "string" }, (req, body, done) => {
+      try {
+        req.rawBody = body;
+        done(null, JSON.parse(body));
+      } catch (err) {
+        done(err, undefined);
+      }
+    });
 
-  _shutdownPromise = (async () => {
-    console.log(`[gateway] Shutting down on ${signal}...`)
+    peer.get("/peer/ping", async () => ({ ok: true, ts: Date.now(), role: "gateway" }));
+    peer.get("/peer/peers", async () => ({ peers: getAgentsForExchange() }));
 
-    if (_pruneTimer) {
-      clearInterval(_pruneTimer)
-      _pruneTimer = null
+    peer.post("/peer/announce", async (req, reply) => {
+      const ann = req.body;
+      if (!ann?.publicKey || !ann?.from) return reply.code(400).send({ error: "Invalid announce" });
+
+      const awSig = req.headers["x-agentworld-signature"];
+      if (awSig) {
+        const authority = req.headers["host"] ?? "localhost";
+        const result = verifyHttpRequestHeaders(req.headers, req.method, req.url, authority, req.rawBody, ann.publicKey);
+        if (!result.ok) return reply.code(403).send({ error: result.error });
+      } else {
+        const { signature, ...signable } = ann;
+        const domainOk = verifyWithDomainSeparator(DOMAIN_SEPARATORS.ANNOUNCE, ann.publicKey, signable, signature);
+        if (!domainOk && !verifySignature(ann.publicKey, signable, signature)) {
+          return reply.code(403).send({ error: "Invalid signature" });
+        }
+      }
+
+      if (agentIdFromPublicKey(ann.publicKey) !== ann.from) {
+        return reply.code(400).send({ error: "agentId mismatch" });
+      }
+      upsertAgent(ann.from, ann.publicKey, {
+        alias: ann.alias, endpoints: ann.endpoints, capabilities: ann.capabilities, persist: true,
+      });
+      return { ok: true, peers: getAgentsForExchange(20) };
+    });
+
+    peer.post("/peer/message", async (req, reply) => {
+      const msg = req.body;
+      if (!msg?.publicKey || !msg?.from) return reply.code(400).send({ error: "Invalid message" });
+
+      const awSig = req.headers["x-agentworld-signature"];
+      if (awSig) {
+        const authority = req.headers["host"] ?? "localhost";
+        const result = verifyHttpRequestHeaders(req.headers, req.method, req.url, authority, req.rawBody, msg.publicKey);
+        if (!result.ok) return reply.code(403).send({ error: result.error });
+      } else {
+        const { signature, ...signable } = msg;
+        if (!verifySignature(msg.publicKey, signable, signature)) {
+          return reply.code(403).send({ error: "Invalid signature" });
+        }
+      }
+
+      if (msg.event === "world.state") {
+        let state;
+        try { state = typeof msg.content === "string" ? JSON.parse(msg.content) : msg.content; } catch { return { ok: true }; }
+        const worldId = state.worldId;
+        if (worldId) broadcast(worldId, { type: "world.state", ...state });
+      }
+
+      return { ok: true };
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Lifecycle
+  // ---------------------------------------------------------------------------
+
+  async function stop() {
+    if (_shutdownPromise) return _shutdownPromise
+
+    _shutdownPromise = (async () => {
+      if (_pruneTimer) {
+        clearInterval(_pruneTimer)
+        _pruneTimer = null
+      }
+      if (_saveTimer) {
+        clearTimeout(_saveTimer)
+        _saveTimer = null
+      }
+      try {
+        await app.close()
+      } catch (error) {
+        console.warn("[gateway] Failed to close server cleanly", error)
+      }
+    })()
+
+    return _shutdownPromise
+  }
+
+  async function start() {
+    loadRegistry()
+    await app.listen({ port: httpPort, host: "::" })
+    console.log(`[gateway] agentId=${selfAgentId}`)
+    console.log(`[gateway] HTTP on [::]:${httpPort}`)
+    _pruneTimer = setInterval(() => pruneStaleAgents(), 3 * 60 * 1000)
+    for (const signal of ["SIGTERM", "SIGINT"]) {
+      process.once(signal, () => void stop())
     }
+  }
 
-    flushRegistry()
-
-    try {
-      await app.close()
-    } catch (error) {
-      console.warn("[gateway] Failed to close server cleanly", error)
-    }
-  })()
-
-  return _shutdownPromise
+  return { app, start, stop }
 }
 
-loadRegistry()
-await app.listen({ port: HTTP_PORT, host: "::" })
-console.log(`[gateway] HTTP on [::]:${HTTP_PORT}`)
+// ---------------------------------------------------------------------------
+// Auto-start when run directly
+// ---------------------------------------------------------------------------
 
-// Prune stale agents every 3 minutes
-_pruneTimer = setInterval(() => pruneStaleAgents(), 3 * 60 * 1000)
-
-for (const signal of ["SIGTERM", "SIGINT"]) {
-  process.once(signal, () => {
-    void shutdown(signal)
-  })
+const _isMain = process.argv[1] === fileURLToPath(new URL(import.meta.url))
+if (_isMain) {
+  const { start } = await createGatewayApp()
+  await start()
 }

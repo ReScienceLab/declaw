@@ -1,0 +1,86 @@
+import { describe, it, before, after } from "node:test"
+import assert from "node:assert/strict"
+import * as os from "node:os"
+import * as fs from "node:fs"
+import * as path from "node:path"
+
+import nacl from "tweetnacl"
+import { createGatewayApp } from "../gateway/server.mjs"
+
+const { agentIdFromPublicKey, signWithDomainSeparator, DOMAIN_SEPARATORS } =
+  await import("../packages/agent-world-sdk/dist/crypto.js")
+
+function makeKeypair() {
+  const kp = nacl.sign.keyPair()
+  const pubB64 = Buffer.from(kp.publicKey).toString("base64")
+  return { publicKey: pubB64, secretKey: kp.secretKey, agentId: agentIdFromPublicKey(pubB64) }
+}
+
+describe("Gateway /world/:worldId", () => {
+  let tmpDir
+  let app
+  let stop
+
+  before(async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "gateway-world-record-"))
+    ;({ app, stop } = await createGatewayApp({ dataDir: tmpDir }))
+  })
+
+  after(async () => {
+    await stop()
+    fs.rmSync(tmpDir, { recursive: true })
+  })
+
+  async function announce(kp, worldId) {
+    const payload = {
+      from: kp.agentId,
+      publicKey: kp.publicKey,
+      alias: `World ${worldId}`,
+      endpoints: [{ transport: "tcp", address: "10.0.0.1", port: 8099, priority: 1 }],
+      capabilities: [`world:${worldId}`],
+      timestamp: Date.now(),
+    }
+    const signature = signWithDomainSeparator(DOMAIN_SEPARATORS.ANNOUNCE, payload, kp.secretKey)
+    return app.inject({
+      method: "POST",
+      url: "/peer/announce",
+      payload: { ...payload, signature },
+    })
+  }
+
+  it("GET /world/:worldId returns 404 for unknown world", async () => {
+    const resp = await app.inject({ method: "GET", url: "/world/nonexistent" })
+    assert.equal(resp.statusCode, 404)
+  })
+
+  it("GET /world/:worldId includes publicKey after announce", async () => {
+    const kp = makeKeypair()
+    const worldId = "pixel-city"
+
+    const annResp = await announce(kp, worldId)
+    assert.equal(annResp.statusCode, 200, `announce failed: ${annResp.body}`)
+
+    const resp = await app.inject({ method: "GET", url: `/world/${worldId}` })
+    assert.equal(resp.statusCode, 200)
+
+    const body = JSON.parse(resp.body)
+    assert.equal(body.worldId, worldId)
+    assert.equal(body.publicKey, kp.publicKey, "publicKey must be present in /world/:worldId response")
+    assert.equal(body.agentId, kp.agentId)
+  })
+
+  it("GET /world/:worldId publicKey matches the announcing agent", async () => {
+    const kp1 = makeKeypair()
+    const kp2 = makeKeypair()
+
+    await announce(kp1, "arena-alpha")
+    await announce(kp2, "arena-beta")
+
+    const r1 = JSON.parse((await app.inject({ method: "GET", url: "/world/arena-alpha" })).body)
+    const r2 = JSON.parse((await app.inject({ method: "GET", url: "/world/arena-beta" })).body)
+
+    assert.equal(r1.publicKey, kp1.publicKey)
+    assert.equal(r2.publicKey, kp2.publicKey)
+    assert.notEqual(r1.publicKey, r2.publicKey)
+  })
+})
