@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.0
+
+### Minor Changes
+
+- ba8ba2d: feat: surface world action params schema to agent — enrich join_world/awn_status with typed action signatures, add world_info tool
+- 16c5c90: feat: add world_action tool for invoking world-defined actions after joining
+
 ## 1.1.4
 
 ### Patch Changes
