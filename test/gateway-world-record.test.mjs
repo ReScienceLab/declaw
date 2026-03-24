@@ -83,4 +83,66 @@ describe("Gateway /world/:worldId", () => {
     assert.equal(r2.publicKey, kp2.publicKey)
     assert.notEqual(r1.publicKey, r2.publicKey)
   })
+
+  it("DELETE /world/:worldId returns 404 for unknown world", async () => {
+    const resp = await app.inject({ method: "DELETE", url: "/world/nonexistent-delete" })
+    assert.equal(resp.statusCode, 404)
+  })
+
+  it("DELETE /world/:worldId removes a known world", async () => {
+    const kp = makeKeypair()
+    const worldId = "delete-me"
+
+    await announce(kp, worldId)
+    const before = await app.inject({ method: "GET", url: `/world/${worldId}` })
+    assert.equal(before.statusCode, 200)
+
+    const del = await app.inject({ method: "DELETE", url: `/world/${worldId}` })
+    assert.equal(del.statusCode, 200)
+    const body = JSON.parse(del.body)
+    assert.equal(body.ok, true)
+    assert.equal(body.removed, 1)
+
+    const after = await app.inject({ method: "GET", url: `/world/${worldId}` })
+    assert.equal(after.statusCode, 404)
+  })
+
+  it("DELETE /world/:worldId returns 403 when GATEWAY_ADMIN_KEY is set and token is missing", async () => {
+    const kp = makeKeypair()
+    const worldId = "protected-world"
+    await announce(kp, worldId)
+
+    const prev = process.env.GATEWAY_ADMIN_KEY
+    process.env.GATEWAY_ADMIN_KEY = "secret-test-key"
+    try {
+      const resp = await app.inject({ method: "DELETE", url: `/world/${worldId}` })
+      assert.equal(resp.statusCode, 403)
+    } finally {
+      if (prev === undefined) delete process.env.GATEWAY_ADMIN_KEY
+      else process.env.GATEWAY_ADMIN_KEY = prev
+    }
+  })
+
+  it("DELETE /world/:worldId succeeds with correct GATEWAY_ADMIN_KEY bearer token", async () => {
+    const kp = makeKeypair()
+    const worldId = "protected-world-2"
+    await announce(kp, worldId)
+
+    const prev = process.env.GATEWAY_ADMIN_KEY
+    process.env.GATEWAY_ADMIN_KEY = "secret-test-key"
+    try {
+      const resp = await app.inject({
+        method: "DELETE",
+        url: `/world/${worldId}`,
+        headers: { authorization: "Bearer secret-test-key" },
+      })
+      assert.equal(resp.statusCode, 200)
+      const body = JSON.parse(resp.body)
+      assert.equal(body.ok, true)
+      assert.equal(body.removed, 1)
+    } finally {
+      if (prev === undefined) delete process.env.GATEWAY_ADMIN_KEY
+      else process.env.GATEWAY_ADMIN_KEY = prev
+    }
+  })
 })

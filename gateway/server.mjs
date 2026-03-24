@@ -9,7 +9,8 @@
  *   GET  /health          — health check
  *   GET  /worlds          — list discovered world:* agents on AWN network
  *   GET  /agents          — list all known AWN agents
- *   GET  /world/:worldId  — info about a specific world
+ *   GET    /world/:worldId  — info about a specific world
+ *   DELETE /world/:worldId  — deregister a world (admin, requires GATEWAY_ADMIN_KEY bearer token if set)
  *   GET  /peer/ping       — peer liveness
  *   GET  /peer/peers      — known peers exchange
  *   POST /peer/announce   — world server registration
@@ -496,6 +497,47 @@ export async function createGatewayApp(opts = {}) {
       subscribers: worldSubs.get(worldId)?.size ?? 0,
       lastSeen: w.lastSeen,
     };
+  });
+
+  app.delete("/world/:worldId", {
+    schema: {
+      summary: "Deregister a world (admin)",
+      operationId: "deleteWorld",
+      tags: ["gateway"],
+      params: {
+        type: "object",
+        required: ["worldId"],
+        properties: { worldId: { type: "string" } },
+      },
+      response: {
+        200: {
+          type: "object",
+          required: ["ok", "removed"],
+          properties: { ok: { type: "boolean" }, removed: { type: "integer" } },
+        },
+        403: { $ref: "Error#" },
+        404: { $ref: "Error#" },
+      },
+    },
+  }, async (req, reply) => {
+    const adminKey = process.env.GATEWAY_ADMIN_KEY;
+    if (adminKey) {
+      const auth = req.headers["authorization"] ?? "";
+      if (auth !== `Bearer ${adminKey}`) {
+        return reply.code(403).send({ error: "Forbidden" });
+      }
+    }
+    const { worldId } = req.params;
+    const worlds = findByCapability(`world:${worldId}`);
+    if (!worlds.length) return reply.code(404).send({ error: "World not found" });
+    let removed = 0;
+    for (const w of worlds) {
+      registry.delete(w.agentId);
+      removed++;
+    }
+    _registryModifiedAt = Date.now();
+    console.log(`[gateway] Deregistered world:${worldId} (${removed} agent(s) removed)`);
+    return { ok: true, removed };
   });
 
   app.get("/ws", { websocket: true }, (socket, req) => {
