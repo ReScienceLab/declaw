@@ -289,7 +289,7 @@ async fn handle_world_info(
                     let wid = w.get("worldId").and_then(|v| v.as_str()).unwrap_or("");
                     if wid == world_id {
                         let agent_id = w.get("agentId").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                        let name = w.get("name").and_then(|v| v.as_str()).unwrap_or(&world_id).to_string();
+                        let name = w.get("slug").and_then(|v| v.as_str()).unwrap_or(&world_id).to_string();
                         let last_seen = w.get("lastSeen").and_then(|v| v.as_u64()).unwrap_or(0);
                         let endpoints: Vec<Endpoint> = w
                             .get("endpoints")
@@ -314,16 +314,25 @@ async fn handle_world_info(
     // Fallback to local cache
     if world_summary.is_none() {
         let db = state.agent_db.lock().unwrap();
-        let local_worlds = db.find_by_capability(&format!("world:{}", world_id));
-        if let Some(lw) = local_worlds.first() {
-            world_summary = Some(WorldSummary {
-                world_id: world_id.clone(),
-                agent_id: lw.agent_id.clone(),
-                name: if lw.alias.is_empty() { world_id.clone() } else { lw.alias.clone() },
-                endpoints: lw.endpoints.clone(),
-                reachable: !lw.endpoints.is_empty(),
-                last_seen: lw.last_seen,
-            });
+        let local_worlds = db.find_by_capability("world:");
+
+        // Try to find by protocol ID (agent_id) or by slug (from capability)
+        for lw in local_worlds {
+            let cap = lw.capabilities.iter().find(|c| c.starts_with("world:")).cloned().unwrap_or_default();
+            let slug = cap.strip_prefix("world:").unwrap_or("");
+
+            // Match by protocol ID or slug
+            if lw.agent_id == world_id || slug == world_id {
+                world_summary = Some(WorldSummary {
+                    world_id: slug.to_string(),
+                    agent_id: lw.agent_id.clone(),
+                    name: if lw.alias.is_empty() { slug.to_string() } else { lw.alias.clone() },
+                    endpoints: lw.endpoints.clone(),
+                    reachable: !lw.endpoints.is_empty(),
+                    last_seen: lw.last_seen,
+                });
+                break;
+            }
         }
     }
 

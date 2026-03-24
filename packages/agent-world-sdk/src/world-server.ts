@@ -100,7 +100,12 @@ export async function createWorldServer(
     { alias: string; endpoints: Endpoint[] }
   >();
   // Cache manifest from first join for public /world/manifest endpoint
-  let cachedManifest: WorldManifest | null = null;
+  // Initialize with basic info so /world/manifest works before any join
+  let cachedManifest: WorldManifest | null = buildManifest({
+    name: worldName,
+    type: worldType,
+    theme: worldTheme,
+  });
 
   function getMembers(exclude?: string): WorldMember[] {
     const members: WorldMember[] = [];
