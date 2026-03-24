@@ -306,10 +306,9 @@ export async function createGatewayApp(opts = {}) {
       }))
   }
 
-  function listWorlds(limit = 100) {
+  function listWorlds() {
     return [...worldRegistry.values()]
       .sort((a, b) => b.lastSeen - a.lastSeen)
-      .slice(0, limit)
   }
 
   function getWorld(worldId) {
