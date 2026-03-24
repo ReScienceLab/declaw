@@ -26,6 +26,16 @@ tracing = "0.1"
 thiserror = "2"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
+[package.metadata.deb]
+maintainer = "ReScienceLab <resciencelab@users.noreply.github.com>"
+section = "net"
+priority = "optional"
+assets = [
+  ["target/release/awn", "usr/bin/", "755"],
+  ["skills/SKILL.md", "usr/share/awn/", "644"],
+]
+extended-description = "Standalone CLI for the Agent World Network. Discover worlds, join them, exchange Ed25519-signed messages with co-member agents. Single binary, zero runtime dependencies."
+
 [dev-dependencies]
 tempfile = "3"
 assert_cmd = "2"

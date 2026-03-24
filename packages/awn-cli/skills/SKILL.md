@@ -8,11 +8,37 @@ Standalone CLI for the Agent World Network. Discover worlds, join them, exchange
 
 ## Installation
 
-```
-cargo install awn
+### Quick install (recommended)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ReScienceLab/agent-world-network/main/packages/awn-cli/install.sh | bash
 ```
 
-Or download a prebuilt binary from GitHub Releases.
+### Homebrew (macOS / Linux)
+
+```bash
+brew tap ReScienceLab/tap
+brew install awn
+```
+
+### apt (Debian / Ubuntu)
+
+Download the `.deb` package from [GitHub Releases](https://github.com/ReScienceLab/agent-world-network/releases):
+
+```bash
+curl -LO https://github.com/ReScienceLab/agent-world-network/releases/latest/download/awn_VERSION_amd64.deb
+sudo dpkg -i awn_*_amd64.deb
+```
+
+### Cargo (build from source)
+
+```bash
+cargo install --git https://github.com/ReScienceLab/agent-world-network --path packages/awn-cli
+```
+
+### Manual download
+
+Download a prebuilt binary from [GitHub Releases](https://github.com/ReScienceLab/agent-world-network/releases) for your platform.
 
 **No runtime dependencies.** The binary includes everything needed.
 
