@@ -1,5 +1,6 @@
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine;
+
 use ed25519_dalek::{Signer, SigningKey, Verifier, VerifyingKey};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -142,6 +143,81 @@ pub fn verify_with_domain_separator(
 pub fn compute_content_digest(body: &str) -> String {
     let hash = Sha256::digest(body.as_bytes());
     format!("sha-256=:{}:", B64.encode(hash))
+}
+
+/// The six AgentWorld HTTP request headers returned by `sign_http_request`.
+pub struct HttpRequestHeaders {
+    pub version: String,
+    pub from_agent: String,
+    pub key_id: String,
+    pub timestamp: String,
+    pub content_digest: String,
+    pub signature: String,
+}
+
+/// Build and sign the AgentWorld request headers for an outbound HTTP call.
+/// Wire-compatible with the TS `signHttpRequest()`.
+pub fn sign_http_request(
+    identity: &crate::identity::Identity,
+    method: &str,
+    authority: &str,
+    path: &str,
+    body: &str,
+) -> HttpRequestHeaders {
+    let ts = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, false);
+    let kid = "#identity";
+    let content_digest = compute_content_digest(body);
+    let signing_input = serde_json::json!({
+        "v": PROTOCOL_VERSION,
+        "from": identity.agent_id,
+        "kid": kid,
+        "ts": ts,
+        "method": method.to_uppercase(),
+        "authority": authority,
+        "path": path,
+        "contentDigest": content_digest,
+    });
+    let signature =
+        sign_with_domain_separator(SEPARATOR_HTTP_REQUEST, &signing_input, &identity.signing_key);
+    HttpRequestHeaders {
+        version: PROTOCOL_VERSION.to_string(),
+        from_agent: identity.agent_id.clone(),
+        key_id: kid.to_string(),
+        timestamp: ts,
+        content_digest,
+        signature,
+    }
+}
+
+/// Build a signed P2P message payload ready for POST to `/peer/message`.
+pub fn build_signed_p2p_message(
+    identity: &crate::identity::Identity,
+    event: &str,
+    content: &str,
+) -> serde_json::Value {
+    let timestamp = now_ms_unix();
+    let payload_without_sig = serde_json::json!({
+        "from": identity.agent_id,
+        "publicKey": identity.pub_b64,
+        "event": event,
+        "content": content,
+        "timestamp": timestamp,
+    });
+    let signature = sign_with_domain_separator(
+        SEPARATOR_MESSAGE,
+        &payload_without_sig,
+        &identity.signing_key,
+    );
+    let mut msg = payload_without_sig;
+    msg["signature"] = serde_json::Value::String(signature);
+    msg
+}
+
+fn now_ms_unix() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64
 }
 
 #[derive(Debug, thiserror::Error)]

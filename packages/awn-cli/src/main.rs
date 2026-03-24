@@ -40,8 +40,32 @@ enum Commands {
     Worlds,
     /// Get detailed info about a specific world
     World {
-        /// World ID to query
+        /// World ID or slug to query
         world_id: String,
+    },
+    /// List currently joined worlds
+    Joined,
+    /// Join a world by world ID, slug, or direct address (host:port)
+    Join {
+        /// World ID, slug, or direct address
+        world_id: String,
+    },
+    /// Leave a joined world
+    Leave {
+        /// World ID or slug to leave
+        world_id: String,
+    },
+    /// Ping an agent to check reachability
+    Ping {
+        /// Agent ID to ping
+        agent_id: String,
+    },
+    /// Send a direct P2P message to an agent
+    Send {
+        /// Target agent ID
+        agent_id: String,
+        /// Message text
+        message: String,
     },
 }
 
@@ -249,6 +273,173 @@ async fn main() {
                 Err(_) => {
                     if json_output {
                         println!("{}", serde_json::json!({"error": "AWN daemon not running. Start with: awn daemon start"}));
+                    } else {
+                        eprintln!("AWN daemon not running. Start with: awn daemon start");
+                    }
+                    std::process::exit(1);
+                }
+            }
+        }
+        Commands::Joined => {
+            let ipc = resolve_ipc_port_raw(cli_ipc_port);
+            let url = format!("http://127.0.0.1:{ipc}/ipc/joined");
+            match reqwest::get(&url).await {
+                Ok(resp) => {
+                    if let Ok(data) = resp.json::<daemon::JoinedWorldsResponse>().await {
+                        if json_output {
+                            println!("{}", serde_json::to_string(&data).unwrap());
+                        } else if data.worlds.is_empty() {
+                            println!("Not joined any worlds. Use: awn join <world_id>");
+                        } else {
+                            println!("=== Joined Worlds ({}) ===", data.worlds.len());
+                            for w in &data.worlds {
+                                let label = w.slug.as_deref().unwrap_or(&w.world_id);
+                                println!("  {} — {} ({}:{})", label, w.name, w.address, w.port);
+                            }
+                        }
+                    }
+                }
+                Err(_) => {
+                    if json_output {
+                        println!("{}", serde_json::json!({"error": "AWN daemon not running"}));
+                    } else {
+                        eprintln!("AWN daemon not running. Start with: awn daemon start");
+                    }
+                    std::process::exit(1);
+                }
+            }
+        }
+        Commands::Join { ref world_id } => {
+            let ipc = resolve_ipc_port_raw(cli_ipc_port);
+            let encoded_id = urlencoding(world_id);
+            let url = format!("http://127.0.0.1:{ipc}/ipc/join/{encoded_id}");
+            let client = reqwest::Client::new();
+            match client.post(&url).send().await {
+                Ok(resp) => {
+                    if resp.status().is_success() {
+                        if let Ok(data) = resp.json::<serde_json::Value>().await {
+                            if json_output {
+                                println!("{}", data);
+                            } else {
+                                let name = data.get("name").and_then(|v| v.as_str()).unwrap_or(world_id);
+                                let members = data.get("members").and_then(|v| v.as_u64()).unwrap_or(0);
+                                let wid = data.get("worldId").and_then(|v| v.as_str()).unwrap_or(world_id);
+                                println!("Joined world: {} — {} ({} members)", wid, name, members);
+                            }
+                        }
+                    } else {
+                        if json_output {
+                            println!("{}", serde_json::json!({"error": format!("Failed to join world: {}", world_id)}));
+                        } else {
+                            eprintln!("Failed to join world '{}'. Check that the world ID or address is correct.", world_id);
+                        }
+                        std::process::exit(1);
+                    }
+                }
+                Err(_) => {
+                    if json_output {
+                        println!("{}", serde_json::json!({"error": "AWN daemon not running"}));
+                    } else {
+                        eprintln!("AWN daemon not running. Start with: awn daemon start");
+                    }
+                    std::process::exit(1);
+                }
+            }
+        }
+        Commands::Leave { ref world_id } => {
+            let ipc = resolve_ipc_port_raw(cli_ipc_port);
+            let encoded_id = urlencoding(world_id);
+            let url = format!("http://127.0.0.1:{ipc}/ipc/leave/{encoded_id}");
+            let client = reqwest::Client::new();
+            match client.post(&url).send().await {
+                Ok(resp) => {
+                    if resp.status().is_success() {
+                        if json_output {
+                            println!("{}", serde_json::json!({"ok": true}));
+                        } else {
+                            println!("Left world '{}'.", world_id);
+                        }
+                    } else if resp.status() == reqwest::StatusCode::NOT_FOUND {
+                        if json_output {
+                            println!("{}", serde_json::json!({"error": "World not found in joined list"}));
+                        } else {
+                            eprintln!("World '{}' is not in your joined list.", world_id);
+                        }
+                        std::process::exit(1);
+                    } else {
+                        eprintln!("Failed to leave world '{}'.", world_id);
+                        std::process::exit(1);
+                    }
+                }
+                Err(_) => {
+                    if json_output {
+                        println!("{}", serde_json::json!({"error": "AWN daemon not running"}));
+                    } else {
+                        eprintln!("AWN daemon not running. Start with: awn daemon start");
+                    }
+                    std::process::exit(1);
+                }
+            }
+        }
+        Commands::Ping { ref agent_id } => {
+            let ipc = resolve_ipc_port_raw(cli_ipc_port);
+            let encoded_id = urlencoding(agent_id);
+            let url = format!("http://127.0.0.1:{ipc}/ipc/peer/ping/{encoded_id}");
+            match reqwest::get(&url).await {
+                Ok(resp) => {
+                    if let Ok(data) = resp.json::<daemon::PingResponse>().await {
+                        if json_output {
+                            println!("{}", serde_json::to_string(&data).unwrap());
+                        } else if data.ok {
+                            let latency = data.latency_ms.map(|ms| format!(" ({}ms)", ms)).unwrap_or_default();
+                            println!("Reachable{}", latency);
+                        } else {
+                            println!("Unreachable: {}", data.error.as_deref().unwrap_or("unknown"));
+                        }
+                    }
+                }
+                Err(_) => {
+                    if json_output {
+                        println!("{}", serde_json::json!({"error": "AWN daemon not running"}));
+                    } else {
+                        eprintln!("AWN daemon not running. Start with: awn daemon start");
+                    }
+                    std::process::exit(1);
+                }
+            }
+        }
+        Commands::Send { ref agent_id, ref message } => {
+            let ipc = resolve_ipc_port_raw(cli_ipc_port);
+            let url = format!("http://127.0.0.1:{ipc}/ipc/send");
+            let client = reqwest::Client::new();
+            let body = serde_json::json!({"agent_id": agent_id, "message": message});
+            match client.post(&url).json(&body).send().await {
+                Ok(resp) => {
+                    if resp.status().is_success() {
+                        if json_output {
+                            println!("{}", serde_json::json!({"ok": true}));
+                        } else {
+                            println!("Message sent to {}.", agent_id);
+                        }
+                    } else if resp.status() == reqwest::StatusCode::NOT_FOUND {
+                        if json_output {
+                            println!("{}", serde_json::json!({"error": "Agent not found or no known endpoints"}));
+                        } else {
+                            eprintln!("Agent '{}' not found or has no known endpoints. Join a shared world first.", agent_id);
+                        }
+                        std::process::exit(1);
+                    } else {
+                        if json_output {
+                            println!("{}", serde_json::json!({"error": "Failed to deliver message"}));
+                        } else {
+                            eprintln!("Failed to deliver message to '{}'.", agent_id);
+                        }
+                        std::process::exit(1);
+                    }
+                }
+                Err(_) => {
+                    if json_output {
+                        println!("{}", serde_json::json!({"error": "AWN daemon not running"}));
                     } else {
                         eprintln!("AWN daemon not running. Start with: awn daemon start");
                     }

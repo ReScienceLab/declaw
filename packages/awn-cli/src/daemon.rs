@@ -3,22 +3,42 @@ use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tokio::sync::oneshot;
 
+use crate::agent_db::{AgentDb, AgentRecord, Endpoint};
+use crate::crypto::{build_signed_p2p_message, sign_http_request};
 use crate::identity::{self, Identity};
-use crate::agent_db::{Endpoint, AgentDb, AgentRecord};
 
 const DEFAULT_IPC_PORT: u16 = 8199;
 const PORT_FILE: &str = "daemon.port";
 const PID_FILE: &str = "daemon.pid";
 
+#[derive(Clone, Serialize, Deserialize)]
+pub struct JoinedWorld {
+    #[serde(rename = "worldId")]
+    pub world_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub slug: Option<String>,
+    pub name: String,
+    pub address: String,
+    pub port: u16,
+    #[serde(rename = "publicKey")]
+    pub public_key: String,
+    #[serde(rename = "agentId")]
+    pub agent_id: String,
+    #[serde(rename = "joinedAt")]
+    pub joined_at: u64,
+}
+
 #[derive(Clone)]
 pub struct DaemonState {
     pub identity: Identity,
     pub agent_db: Arc<Mutex<AgentDb>>,
+    pub joined_worlds: Arc<Mutex<HashMap<String, JoinedWorld>>>,
     pub data_dir: PathBuf,
     pub gateway_url: String,
     pub listen_port: u16,
@@ -113,6 +133,26 @@ pub struct OkResponse {
     pub message: Option<String>,
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct JoinedWorldsResponse {
+    pub worlds: Vec<JoinedWorld>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct PingResponse {
+    pub ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latency_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct SendMessageBody {
+    pub agent_id: String,
+    pub message: String,
+}
+
 pub struct DaemonHandle {
     shutdown_tx: oneshot::Sender<()>,
     pub addr: SocketAddr,
@@ -137,6 +177,7 @@ pub async fn start_daemon(
     let state = DaemonState {
         identity,
         agent_db: Arc::new(Mutex::new(agent_db)),
+        joined_worlds: Arc::new(Mutex::new(HashMap::new())),
         data_dir,
         gateway_url,
         listen_port,
@@ -151,6 +192,11 @@ pub async fn start_daemon(
         .route("/ipc/worlds", get(handle_worlds))
         .route("/ipc/world/{world_id}", get(handle_world_info))
         .route("/ipc/ping", get(handle_ping))
+        .route("/ipc/joined", get(handle_joined_worlds))
+        .route("/ipc/join/{world_id}", post(handle_join_world))
+        .route("/ipc/leave/{world_id}", post(handle_leave_world))
+        .route("/ipc/peer/ping/{agent_id}", get(handle_ping_agent))
+        .route("/ipc/send", post(handle_send_message))
         .route(
             "/ipc/shutdown",
             post({
@@ -384,6 +430,424 @@ async fn handle_ping() -> Json<OkResponse> {
         ok: true,
         message: Some("daemon alive".to_string()),
     })
+}
+
+async fn handle_joined_worlds(State(state): State<DaemonState>) -> Json<JoinedWorldsResponse> {
+    let worlds = state
+        .joined_worlds
+        .lock()
+        .unwrap()
+        .values()
+        .cloned()
+        .collect();
+    Json(JoinedWorldsResponse { worlds })
+}
+
+async fn handle_join_world(
+    State(state): State<DaemonState>,
+    Path(world_id): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .unwrap();
+
+    // Resolve world: try direct worldId first, then search by slug
+    let (address, port, public_key, resolved_world_id, slug) =
+        resolve_world(&client, &state.gateway_url, &world_id)
+            .await
+            .map_err(|_| StatusCode::NOT_FOUND)?;
+
+    // Build join P2P message (content is a JSON string of join params)
+    let content = serde_json::json!({ "endpoints": [], "alias": "" }).to_string();
+    let msg = build_signed_p2p_message(&state.identity, "world.join", &content);
+
+    // Send to world server
+    let is_ipv6 = address.contains(':') && !address.contains('.');
+    let host = if is_ipv6 {
+        format!("[{}]:{}", address, port)
+    } else {
+        format!("{}:{}", address, port)
+    };
+    let url = format!("http://{}/peer/message", host);
+    let body = msg.to_string();
+    let headers = sign_http_request(&state.identity, "POST", &host, "/peer/message", &body);
+
+    let resp = client
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .header("X-AgentWorld-Version", &headers.version)
+        .header("X-AgentWorld-From", &headers.from_agent)
+        .header("X-AgentWorld-KeyId", &headers.key_id)
+        .header("X-AgentWorld-Timestamp", &headers.timestamp)
+        .header("Content-Digest", &headers.content_digest)
+        .header("X-AgentWorld-Signature", &headers.signature)
+        .body(body)
+        .send()
+        .await
+        .map_err(|_| StatusCode::BAD_GATEWAY)?;
+
+    if !resp.status().is_success() {
+        return Err(StatusCode::BAD_GATEWAY);
+    }
+
+    let resp_data: serde_json::Value = resp.json().await.unwrap_or(serde_json::json!({}));
+
+    // Extract manifest name for display
+    let name = resp_data
+        .get("manifest")
+        .and_then(|m| m.get("name"))
+        .and_then(|n| n.as_str())
+        .unwrap_or(slug.as_deref().unwrap_or(&resolved_world_id))
+        .to_string();
+
+    // Store joined world
+    let joined = JoinedWorld {
+        world_id: resolved_world_id.clone(),
+        slug: slug.clone(),
+        name: name.clone(),
+        address: address.clone(),
+        port,
+        public_key: public_key.clone(),
+        agent_id: public_key_to_agent_id(&public_key),
+        joined_at: now_ms(),
+    };
+    state
+        .joined_worlds
+        .lock()
+        .unwrap()
+        .insert(resolved_world_id.clone(), joined);
+
+    // Store co-members in agent_db
+    if let Some(members) = resp_data.get("members").and_then(|m| m.as_array()) {
+        let mut db = state.agent_db.lock().unwrap();
+        for member in members {
+            if let Some(agent_id) = member.get("agentId").and_then(|v| v.as_str()) {
+                if agent_id == state.identity.agent_id {
+                    continue;
+                }
+                let alias = member
+                    .get("alias")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                let endpoints: Vec<Endpoint> = member
+                    .get("endpoints")
+                    .and_then(|v| serde_json::from_value(v.clone()).ok())
+                    .unwrap_or_default();
+                db.upsert(
+                    agent_id,
+                    "",
+                    alias.as_deref(),
+                    Some(endpoints),
+                    None,
+                    Some("gossip"),
+                    None,
+                );
+            }
+        }
+    }
+
+    let member_count = resp_data
+        .get("members")
+        .and_then(|m| m.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "worldId": resolved_world_id,
+        "slug": slug,
+        "name": name,
+        "members": member_count,
+        "manifest": resp_data.get("manifest"),
+    })))
+}
+
+async fn handle_leave_world(
+    State(state): State<DaemonState>,
+    Path(world_id): Path<String>,
+) -> Result<Json<OkResponse>, StatusCode> {
+    let joined = state
+        .joined_worlds
+        .lock()
+        .unwrap()
+        .get(&world_id)
+        .or_else(|| {
+            // Also try by slug — not directly possible with .get(), handled below
+            None
+        })
+        .cloned();
+
+    // Also search by slug
+    let joined = if joined.is_none() {
+        state
+            .joined_worlds
+            .lock()
+            .unwrap()
+            .values()
+            .find(|w| w.slug.as_deref() == Some(&world_id))
+            .cloned()
+    } else {
+        joined
+    };
+
+    let info = joined.ok_or(StatusCode::NOT_FOUND)?;
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .unwrap();
+
+    let msg = build_signed_p2p_message(&state.identity, "world.leave", "");
+    let is_ipv6 = info.address.contains(':') && !info.address.contains('.');
+    let host = if is_ipv6 {
+        format!("[{}]:{}", info.address, info.port)
+    } else {
+        format!("{}:{}", info.address, info.port)
+    };
+    let url = format!("http://{}/peer/message", host);
+    let body = msg.to_string();
+    let headers = sign_http_request(&state.identity, "POST", &host, "/peer/message", &body);
+
+    // Best-effort — don't fail if server is unreachable
+    let _ = client
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .header("X-AgentWorld-Version", &headers.version)
+        .header("X-AgentWorld-From", &headers.from_agent)
+        .header("X-AgentWorld-KeyId", &headers.key_id)
+        .header("X-AgentWorld-Timestamp", &headers.timestamp)
+        .header("Content-Digest", &headers.content_digest)
+        .header("X-AgentWorld-Signature", &headers.signature)
+        .body(body)
+        .send()
+        .await;
+
+    state
+        .joined_worlds
+        .lock()
+        .unwrap()
+        .remove(&info.world_id);
+
+    Ok(Json(OkResponse {
+        ok: true,
+        message: Some(format!("Left world {}", info.world_id)),
+    }))
+}
+
+async fn handle_ping_agent(
+    State(state): State<DaemonState>,
+    Path(agent_id): Path<String>,
+) -> Json<PingResponse> {
+    let endpoints = {
+        let db = state.agent_db.lock().unwrap();
+        db.get(&agent_id)
+            .map(|r| r.endpoints.clone())
+            .unwrap_or_default()
+    };
+
+    if endpoints.is_empty() {
+        return Json(PingResponse {
+            ok: false,
+            latency_ms: None,
+            error: Some("No known endpoints for agent".to_string()),
+        });
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .unwrap();
+
+    let mut sorted = endpoints;
+    sorted.sort_by_key(|e| e.priority);
+
+    for ep in &sorted {
+        if ep.transport != "tcp" && ep.transport != "http" {
+            continue;
+        }
+        let is_ipv6 = ep.address.contains(':') && !ep.address.contains('.');
+        let host = if is_ipv6 {
+            format!("[{}]:{}", ep.address, ep.port)
+        } else {
+            format!("{}:{}", ep.address, ep.port)
+        };
+        let url = format!("http://{}/peer/ping", host);
+        let start = std::time::Instant::now();
+        if client.get(&url).send().await.map_or(false, |r| r.status().is_success()) {
+            return Json(PingResponse {
+                ok: true,
+                latency_ms: Some(start.elapsed().as_millis() as u64),
+                error: None,
+            });
+        }
+    }
+
+    Json(PingResponse {
+        ok: false,
+        latency_ms: None,
+        error: Some("Unreachable".to_string()),
+    })
+}
+
+async fn handle_send_message(
+    State(state): State<DaemonState>,
+    Json(body): Json<SendMessageBody>,
+) -> Result<Json<OkResponse>, StatusCode> {
+    let endpoints = {
+        let db = state.agent_db.lock().unwrap();
+        db.get(&body.agent_id)
+            .map(|r| r.endpoints.clone())
+            .unwrap_or_default()
+    };
+
+    if endpoints.is_empty() {
+        return Err(StatusCode::NOT_FOUND);
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .unwrap();
+
+    let msg = build_signed_p2p_message(&state.identity, "chat", &body.message);
+    let msg_body = msg.to_string();
+
+    let mut sorted = endpoints;
+    sorted.sort_by_key(|e| e.priority);
+
+    for ep in &sorted {
+        if ep.transport != "tcp" && ep.transport != "http" {
+            continue;
+        }
+        let is_ipv6 = ep.address.contains(':') && !ep.address.contains('.');
+        let host = if is_ipv6 {
+            format!("[{}]:{}", ep.address, ep.port)
+        } else {
+            format!("{}:{}", ep.address, ep.port)
+        };
+        let url = format!("http://{}/peer/message", host);
+        let headers =
+            sign_http_request(&state.identity, "POST", &host, "/peer/message", &msg_body);
+
+        let resp = client
+            .post(&url)
+            .header("Content-Type", "application/json")
+            .header("X-AgentWorld-Version", &headers.version)
+            .header("X-AgentWorld-From", &headers.from_agent)
+            .header("X-AgentWorld-KeyId", &headers.key_id)
+            .header("X-AgentWorld-Timestamp", &headers.timestamp)
+            .header("Content-Digest", &headers.content_digest)
+            .header("X-AgentWorld-Signature", &headers.signature)
+            .body(msg_body.clone())
+            .send()
+            .await;
+
+        if resp.map_or(false, |r| r.status().is_success()) {
+            return Ok(Json(OkResponse {
+                ok: true,
+                message: Some(format!("Message sent to {}", body.agent_id)),
+            }));
+        }
+    }
+
+    Err(StatusCode::BAD_GATEWAY)
+}
+
+/// Resolve a world identifier (worldId or slug or direct address) to
+/// (address, port, publicKey, worldId, slug).
+async fn resolve_world(
+    client: &reqwest::Client,
+    gateway_url: &str,
+    identifier: &str,
+) -> Result<(String, u16, String, String, Option<String>), String> {
+    // Direct address format: "host:port" or "host"
+    if !identifier.starts_with("aw:") && identifier.contains(':') && !identifier.starts_with("http") {
+        let parts: Vec<&str> = identifier.rsplitn(2, ':').collect();
+        if parts.len() == 2 {
+            if let Ok(p) = parts[0].parse::<u16>() {
+                return Ok((parts[1].trim_matches('[').trim_matches(']').to_string(), p, String::new(), identifier.to_string(), None));
+            }
+        }
+        return Ok((identifier.to_string(), 8099, String::new(), identifier.to_string(), None));
+    }
+
+    // Try direct worldId lookup
+    let url = format!("{}/worlds/{}", gateway_url.trim_end_matches('/'), urlencoding(identifier));
+    if let Ok(resp) = client.get(&url).send().await {
+        if resp.status().is_success() {
+            if let Ok(data) = resp.json::<serde_json::Value>().await {
+                if let Some(ep) = best_endpoint(&data) {
+                    let public_key = data.get("publicKey").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let world_id = data.get("worldId").and_then(|v| v.as_str()).unwrap_or(identifier).to_string();
+                    let slug = data.get("slug").and_then(|v| v.as_str()).map(|s| s.to_string());
+                    return Ok((ep.address, ep.port, public_key, world_id, slug));
+                }
+            }
+        }
+    }
+
+    // Fallback: list all worlds and search by slug
+    let all_url = format!("{}/worlds", gateway_url.trim_end_matches('/'));
+    if let Ok(resp) = client.get(&all_url).send().await {
+        if let Ok(data) = resp.json::<serde_json::Value>().await {
+            if let Some(worlds) = data.get("worlds").and_then(|w| w.as_array()) {
+                for w in worlds {
+                    let slug = w.get("slug").and_then(|v| v.as_str()).unwrap_or("");
+                    let wid = w.get("worldId").and_then(|v| v.as_str()).unwrap_or("");
+                    if slug == identifier || wid == identifier {
+                        if let Some(ep) = best_endpoint(w) {
+                            let public_key = w.get("publicKey").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                            return Ok((ep.address, ep.port, public_key, wid.to_string(), Some(slug.to_string())));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Err(format!("World '{}' not found", identifier))
+}
+
+fn best_endpoint(world_data: &serde_json::Value) -> Option<Endpoint> {
+    let endpoints: Vec<Endpoint> = world_data
+        .get("endpoints")
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+        .unwrap_or_default();
+    if endpoints.is_empty() {
+        return None;
+    }
+    let mut sorted = endpoints;
+    sorted.sort_by_key(|e| e.priority);
+    sorted.into_iter().find(|e| e.transport == "tcp" || e.transport == "http")
+        .or_else(|| {
+            let mut sorted2: Vec<Endpoint> = world_data
+                .get("endpoints")
+                .and_then(|v| serde_json::from_value(v.clone()).ok())
+                .unwrap_or_default();
+            sorted2.sort_by_key(|e| e.priority);
+            sorted2.into_iter().next()
+        })
+}
+
+fn public_key_to_agent_id(public_key_b64: &str) -> String {
+    crate::crypto::agent_id_from_public_key(public_key_b64).unwrap_or_default()
+}
+
+fn urlencoding(s: &str) -> String {
+    s.chars()
+        .flat_map(|c| match c {
+            'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '_' | '.' | '~' => vec![c],
+            _ => format!("%{:02X}", c as u32).chars().collect(),
+        })
+        .collect()
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64
 }
 
 pub fn ipc_port() -> u16 {
