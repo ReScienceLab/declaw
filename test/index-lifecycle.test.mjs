@@ -332,7 +332,7 @@ describe("plugin lifecycle", () => {
             ok: true,
             status: 200,
             json: async () => ({
-              worlds: [{ worldId: "arena", agentId: worldAgentId, name: "Arena" }],
+              worlds: [{ worldId: "arena", agentId: worldAgentId, name: "Arena", endpoints: [worldEndpoint] }],
             }),
           }
         }
@@ -360,6 +360,10 @@ describe("plugin lifecycle", () => {
       const listWorlds = harness.tools.get("list_worlds")
       const listed = await listWorlds.execute("tool-list", {})
       assert.equal(listed.isError, undefined)
+
+      const discoveredPeer = harness.peers.get(worldAgentId)
+      assert.ok(discoveredPeer, "peer should be discovered after list_worlds")
+      assert.deepEqual(discoveredPeer.endpoints, [worldEndpoint], "endpoints should be populated from /worlds")
 
       const joinWorld = harness.tools.get("join_world")
       const joined = await joinWorld.execute("tool-join", { world_id: "arena" })
