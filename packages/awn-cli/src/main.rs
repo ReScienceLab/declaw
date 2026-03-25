@@ -67,6 +67,16 @@ enum Commands {
         /// Message text
         message: String,
     },
+    /// Call an action on a joined world
+    Action {
+        /// World ID or slug
+        world_id: String,
+        /// Action name (e.g. set_state, post_memo, heartbeat)
+        action: String,
+        /// Action parameters as JSON (e.g. '{"state":"idle","detail":"Hello"}')
+        #[arg(default_value = "{}")]
+        params: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -440,6 +450,60 @@ async fn main() {
                             println!("{}", serde_json::json!({"error": "Failed to deliver message"}));
                         } else {
                             eprintln!("Failed to deliver message to '{}'.", agent_id);
+                        }
+                        std::process::exit(1);
+                    }
+                }
+                Err(_) => {
+                    if json_output {
+                        println!("{}", serde_json::json!({"error": "AWN daemon not running"}));
+                    } else {
+                        eprintln!("AWN daemon not running. Start with: awn daemon start");
+                    }
+                    std::process::exit(1);
+                }
+            }
+        }
+        Commands::Action { ref world_id, ref action, ref params } => {
+            let ipc = resolve_ipc_port_raw(cli_ipc_port);
+            let url = format!("http://127.0.0.1:{ipc}/ipc/action");
+            let client = reqwest::Client::new();
+
+            // Parse params as JSON
+            let params_json: serde_json::Value = serde_json::from_str(params)
+                .unwrap_or_else(|_| serde_json::json!({}));
+
+            let body = serde_json::json!({
+                "world_id": world_id,
+                "action": action,
+                "params": params_json
+            });
+
+            match client.post(&url).json(&body).send().await {
+                Ok(resp) => {
+                    if resp.status().is_success() {
+                        if let Ok(data) = resp.json::<serde_json::Value>().await {
+                            if json_output {
+                                println!("{}", data);
+                            } else {
+                                if data.get("ok").and_then(|v| v.as_bool()).unwrap_or(false) {
+                                    println!("Action '{}' executed successfully on world '{}'.", action, world_id);
+                                    if let Some(result) = data.get("result") {
+                                        println!("Result: {}", serde_json::to_string_pretty(result).unwrap_or_default());
+                                    }
+                                } else {
+                                    let err = data.get("error").and_then(|v| v.as_str()).unwrap_or("unknown error");
+                                    eprintln!("Action failed: {}", err);
+                                    std::process::exit(1);
+                                }
+                            }
+                        }
+                    } else {
+                        let status = resp.status();
+                        if json_output {
+                            println!("{}", serde_json::json!({"error": format!("Request failed with status {}", status)}));
+                        } else {
+                            eprintln!("Failed to execute action. Status: {}", status);
                         }
                         std::process::exit(1);
                     }

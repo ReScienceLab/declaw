@@ -158,6 +158,13 @@ pub struct SendMessageBody {
     pub message: String,
 }
 
+#[derive(Deserialize)]
+pub struct WorldActionBody {
+    pub world_id: String,
+    pub action: String,
+    pub params: serde_json::Value,
+}
+
 pub struct DaemonHandle {
     shutdown_tx: oneshot::Sender<()>,
     pub addr: SocketAddr,
@@ -216,6 +223,7 @@ pub async fn start_daemon(
         .route("/ipc/leave/{world_id}", post(handle_leave_world))
         .route("/ipc/peer/ping/{agent_id}", get(handle_ping_agent))
         .route("/ipc/send", post(handle_send_message))
+        .route("/ipc/action", post(handle_world_action))
         .route("/ipc/messages", get(handle_messages))
         .route(
             "/ipc/shutdown",
@@ -973,6 +981,91 @@ async fn handle_send_message(
     }
 
     Err(StatusCode::BAD_GATEWAY)
+}
+
+async fn handle_world_action(
+    State(state): State<DaemonState>,
+    Json(body): Json<WorldActionBody>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    // Find the joined world by world_id or slug
+    let world = {
+        let worlds = state.joined_worlds.lock().unwrap();
+        worlds
+            .get(&body.world_id)
+            .cloned()
+            .or_else(|| {
+                worlds
+                    .values()
+                    .find(|w| w.slug.as_deref() == Some(&body.world_id))
+                    .cloned()
+            })
+    };
+
+    let world = world.ok_or(StatusCode::NOT_FOUND)?;
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .unwrap();
+
+    // Build action content - spread params at top level alongside action
+    let mut content_obj = serde_json::json!({
+        "action": body.action
+    });
+    if let serde_json::Value::Object(params) = body.params {
+        if let serde_json::Value::Object(ref mut obj) = content_obj {
+            for (k, v) in params {
+                obj.insert(k, v);
+            }
+        }
+    }
+    let content = content_obj.to_string();
+
+    // Build signed P2P message with event "world.action"
+    let msg = build_signed_p2p_message(&state.identity, "world.action", &content);
+    let msg_body = msg.to_string();
+
+    // Send to world server
+    let is_ipv6 = world.address.contains(':') && !world.address.contains('.');
+    let host = if is_ipv6 {
+        format!("[{}]:{}", world.address, world.port)
+    } else {
+        format!("{}:{}", world.address, world.port)
+    };
+    let url = format!("http://{}/peer/message", host);
+    let headers = sign_http_request(&state.identity, "POST", &host, "/peer/message", &msg_body);
+
+    let resp = client
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .header("X-AgentWorld-Version", &headers.version)
+        .header("X-AgentWorld-From", &headers.from_agent)
+        .header("X-AgentWorld-KeyId", &headers.key_id)
+        .header("X-AgentWorld-Timestamp", &headers.timestamp)
+        .header("Content-Digest", &headers.content_digest)
+        .header("X-AgentWorld-Signature", &headers.signature)
+        .body(msg_body)
+        .send()
+        .await
+        .map_err(|_| StatusCode::BAD_GATEWAY)?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let error_text = resp.text().await.unwrap_or_default();
+        return Ok(Json(serde_json::json!({
+            "ok": false,
+            "error": format!("World server returned status {}: {}", status, error_text)
+        })));
+    }
+
+    let resp_data: serde_json::Value = resp.json().await.unwrap_or(serde_json::json!({}));
+
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "worldId": world.world_id,
+        "action": body.action,
+        "result": resp_data
+    })))
 }
 
 /// Resolve a world identifier (worldId or slug or direct address) to
