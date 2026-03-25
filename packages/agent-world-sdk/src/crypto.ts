@@ -160,9 +160,10 @@ function buildRequestSigningInput(opts: {
   authority: string;
   path: string;
   contentDigest: string;
+  v?: string;
 }): Record<string, string> {
   return {
-    v: PROTOCOL_VERSION,
+    v: opts.v ?? PROTOCOL_VERSION,
     from: opts.from,
     kid: opts.kid,
     ts: opts.ts,
@@ -232,6 +233,7 @@ export function verifyHttpRequestHeaders(
   const kid = h["x-agentworld-keyid"] as string | undefined;
   const ts = h["x-agentworld-timestamp"] as string | undefined;
   const cd = h["content-digest"] as string | undefined;
+  const senderVersion = h["x-agentworld-version"] as string | undefined;
 
   if (!sig || !from || !kid || !ts || !cd) {
     return { ok: false, error: "Missing required AgentWorld headers" };
@@ -258,6 +260,7 @@ export function verifyHttpRequestHeaders(
     authority,
     path,
     contentDigest: cd,
+    v: senderVersion,
   });
   const ok = verifyWithDomainSeparator(
     DOMAIN_SEPARATORS.HTTP_REQUEST,
@@ -287,9 +290,10 @@ function buildResponseSigningInput(opts: {
   ts: string;
   status: number;
   contentDigest: string;
+  v?: string;
 }): Record<string, unknown> {
   return {
-    v: PROTOCOL_VERSION,
+    v: opts.v ?? PROTOCOL_VERSION,
     from: opts.from,
     kid: opts.kid,
     ts: opts.ts,
@@ -351,6 +355,7 @@ export function verifyHttpResponseHeaders(
   const kid = h["x-agentworld-keyid"];
   const ts = h["x-agentworld-timestamp"];
   const cd = h["content-digest"];
+  const senderVersion = h["x-agentworld-version"];
 
   if (!sig || !from || !kid || !ts || !cd) {
     return { ok: false, error: "Missing required AgentWorld response headers" };
@@ -375,6 +380,7 @@ export function verifyHttpResponseHeaders(
     ts,
     status,
     contentDigest: cd,
+    v: senderVersion ?? undefined,
   });
   const ok = verifyWithDomainSeparator(
     DOMAIN_SEPARATORS.HTTP_RESPONSE,
